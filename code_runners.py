@@ -17,16 +17,17 @@ def get_program_runtime(executable_path, args=[]):
     end_time = time.time()
     return end_time - start_time
 
-def remake_executable():
+def remake_executable(make_dir):
     """
     *** assumes a makefile is present ***
     Remakes the executable by running the provided make command.
     
     Parameters:
-    - make_command (list): The command to run for remaking the executable.
+    - make_dir (str): The directory containing the Makefile.
     """
-    subprocess.run(['make', 'clean'])
-    subprocess.run(['make', 'all'])
+    make_dir = ''
+    subprocess.run(['make', 'clean'], cwd=make_dir)
+    subprocess.run(['make', 'all'], cwd=make_dir)
     ## and need to add error handling
     ## e.g. if updated code breaks & doesn't compile
 

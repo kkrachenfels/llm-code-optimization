@@ -21,15 +21,14 @@ def annotate_callgrind_output(callgrind_file, annotated_file):
     - callgrind_file (str): The path to the Callgrind output file.
     - source_file (str): The path to the source file to be annotated.
     """
-    subprocess.run([
-        'callgrind_annotate',
-        '--autoyes',
-        '--tree=both',
-        '--inclusive=yes',
-        callgrind_file,
-        '>',
-        annotated_file
-    ])
+    with open(annotated_file, 'w', encoding='utf-8') as outfile:
+        subprocess.run([
+            'callgrind_annotate',
+            '--auto=yes',
+            '--tree=both',
+            '--inclusive=yes',
+            callgrind_file
+        ], stdout=outfile)
 
 
 def replace_in_file(file_path, old_string, new_string):
@@ -97,3 +96,77 @@ def clean_callgrind_output(annotated_file):
 
     with open(annotated_file, 'w', encoding='utf-8') as file:
         file.writelines(cleaned_lines)
+
+
+def identify_hotspots(annotated_file, threshold_percentage):
+    """
+    Identifies hotspots in the annotated Callgrind output file based on a given percentage threshold.
+    
+    Parameters:
+    - annotated_file (str): The path to the annotated Callgrind output file.
+    - threshold_percentage (float): The minimum percentage of total calls to consider a function a hotspot.
+    
+    Returns:
+    - list of tuples: Each tuple contains (function_name, call_count).
+    """
+    call_counts = []
+    total_calls = 0
+
+    # First pass: collect all call counts and sum total calls
+    with open(annotated_file, 'r', encoding='utf-8') as file:
+        for line in file:
+            if 'calls=' in line:
+                parts = line.split()
+                for part in parts:
+                    if part.startswith('calls='):
+                        call_count = int(part.split('=')[1].replace(',', ''))
+                        total_calls += call_count
+                        # Extract function name from the line
+                        func_name = line.split(' * ')[-1].strip()
+                        call_counts.append((func_name, call_count))
+                        break
+
+    # Calculate threshold count based on percentage
+    threshold_count = total_calls * (threshold_percentage / 100.0)
+
+    # Second pass: filter functions above threshold count
+    hotspots = [(func, count) for func, count in call_counts if count >= threshold_count]
+
+    return hotspots
+
+
+def get_hotspot_functions(annotated_file, threshold):
+    """
+    Gets a list of hotspot functions from the annotated Callgrind output file.
+    
+    Parameters:
+    - annotated_file (str): The path to the annotated Callgrind output file.
+    - threshold (int): The minimum number of calls to consider a function a hotspot.
+    
+    Returns:
+    - list of str: hotspot function files & function source code
+    """
+    hotspots = identify_hotspots(annotated_file, threshold)
+    return [func for func, count in hotspots]
+
+def test():
+    # Example usage
+    project_dir = 'datasets/quantpp'
+    executable_path = f'{project_dir}/quant'
+    executable_args = [f'{project_dir}/data/table.csv']
+    callgrind_output = f'{project_dir}/callgrind.out.test'
+    annotated_output = f'{project_dir}/annotated_callgrind.out'
+    cleaned_output = f'{project_dir}/cleaned_callgrind.txt'
+    threshold = 50  # Example threshold
+
+    run_under_callgrind(executable_path, callgrind_output, executable_args)
+    annotate_callgrind_output(callgrind_output, annotated_output)
+    # clean_callgrind_output(annotated_output)
+    # hotspots = get_hotspot_functions(cleaned_output, threshold)
+    # print("Identified Hotspots:")
+    # for hotspot in hotspots:
+    #     print(hotspot)
+
+
+if __name__ == "__main__":
+    test()
