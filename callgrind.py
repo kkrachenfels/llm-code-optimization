@@ -97,23 +97,3 @@ def clean_callgrind_output(annotated_file):
 
     with open(annotated_file, 'w', encoding='utf-8') as file:
         file.writelines(cleaned_lines)
-
-def get_program_runtime(executable_path, args=[]):
-    """
-    Runs the given binary and returns its runtime in seconds.
-    
-    Parameters:
-    - binary_path (str): The path to the binary to be executed.
-    - args (list): Additional arguments to pass to the binary.
-    
-    Returns:
-    - float: The runtime of the program in seconds.
-    """
-    import time
-    start_time = time.time()
-    subprocess.run([executable_path] + args)
-    end_time = time.time()
-    return end_time - start_time
-
-
-
