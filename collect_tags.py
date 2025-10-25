@@ -1,3 +1,40 @@
+import subprocess
+import argparse
+import os
+
+from time import sleep
+
+parser = argparse.ArgumentParser(description="Generate and read ctags files for a project.")
+parser.add_argument('-d', '--source_dir', type=str, default="datasets/quantpp", help="Directory containing project source files.")
+
+def make_ctags_file(source_dir):
+    """
+    Generates a ctags file for the given project source directory.
+    
+    Parameters:
+    - source_dir (str): The directory containing project source files.
+    """
+    # Ensure the output directory exists
+    if not os.path.isdir(source_dir):
+        print(f"[!] {source_dir} is not a valid directory or doesn't exist.")
+        return
+       
+    # Run the ctags command
+    # ctags CLI options:
+    # https://docs.ctags.io/en/latest/man/ctags.1.html#id1
+    subprocess.run([
+        'ctags',
+        '-R',
+        '--exclude=Makefile',
+        '-h',
+        '.h.H.hh.hpp.hxx.h.c.cpp.cxx',
+        '--format=2',
+        '--sort=1',
+        '--fields=nKs',
+        '-f',
+        f'{source_dir}/tags',
+        source_dir])
+
 def read_ctags_file(file_path):
     """
     Reads a ctags file and returns a list of tags and information.
@@ -19,7 +56,18 @@ def read_ctags_file(file_path):
             print(line)
             tag += line.split('\t')
             for i in range(len(tag)):
-                tag[i] = tag[i].strip().strip(';')
+                try:
+                    if tag[i].strip() == '':
+                        tag[i:] = tag[i+1:]
+                except:
+                    break
+            for i in range(len(tag)):
+                tag[i] = tag[i].strip().strip(';{:')
+                if i == 4:
+                    try:
+                        tag[i] = int((tag[i]).replace("line:", ""))
+                    except:
+                        pass
             tag += [''] * (6 - len(tag))  # Pad to ensure complete rows
             tags.append(tag)
     
@@ -35,5 +83,8 @@ def read_ctags_file(file_path):
 
     return tags
 
-
-read_ctags_file('datasets/quantpp/tags')
+if __name__ == "__main__":
+    args = parser.parse_args()
+    make_ctags_file(args.source_dir)
+    sleep(0.5)  # Ensure ctags file is written before reading
+    read_ctags_file(f"{args.source_dir}/tags")
