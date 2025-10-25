@@ -2,3 +2,5 @@ datasets/
 *.dot
 *.png
 *.svg
+
+config.py
