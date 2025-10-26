@@ -155,9 +155,6 @@ def get_top_n_hotspots(annotated_file, top_n = 5, verbose=False):
             break
         top_n_hotspots.append(info_and_callstack)
 
-    if verbose:
-        print(json.dumps(top_n_hotspots, indent=4))
-
     return top_n_hotspots
 
 
@@ -170,8 +167,9 @@ def run_callgrind_pipeline(
 ):
     callgrind_output = f'{project_dir}/callgrind.out'
     annotated_output = f'{project_dir}/callgrind_annotated.out'
+    hotspot_dump = f'{project_dir}/hotspots.json'
 
-    run_under_callgrind(executable_path, callgrind_output, executable_args)
+    # run_under_callgrind(executable_path, callgrind_output, executable_args)
     annotate_callgrind_output(callgrind_output, annotated_output)
     clean_callgrind_output(annotated_output)
     hotspots = get_top_n_hotspots(annotated_output, top_n)
@@ -180,7 +178,12 @@ def run_callgrind_pipeline(
         print("Identified Hotspots:")
         for hotspot in hotspots:
             print(hotspot['info'])
+    else:
+        print(json.dumps(hotspots, indent=4))
 
+    with open(hotspot_dump, 'w') as f:
+        json.dump(hotspots, f, indent=4)
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Profile a program using Callgrind and identify hotspots.")
@@ -188,7 +191,7 @@ if __name__ == "__main__":
     parser.add_argument('-e', '--exe', type=str, default="datasets/quantpp/quant", help="Path to the executable to be profiled.")
     parser.add_argument('-a', '--exe-args', nargs='*', default=['datasets/quantpp/data/table.csv'], help="Additional arguments to pass to the executable.")
     parser.add_argument('-n', '--top-n', type=int, default=1, help="Number of top hotspots to identify.")
-    parser.add_argument('-v', '--verbose', action='store_true', help="print full JSON dump of hotspots rather than python list dump")
+    parser.add_argument('-v', '--verbose', action='store_true', help="print full JSON stacktrace of hotspots rather than singular fns")
     args = parser.parse_args()
 
     run_callgrind_pipeline(
