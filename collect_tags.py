@@ -1,11 +1,9 @@
-import subprocess
-import argparse
 import os
+import argparse
+import subprocess
 
 from time import sleep
 
-parser = argparse.ArgumentParser(description="Generate and read ctags files for a project.")
-parser.add_argument('-d', '--source_dir', type=str, default="datasets/quantpp", help="Directory containing project source files.")
 
 def make_ctags_file(source_dir):
     """
@@ -84,7 +82,10 @@ def read_ctags_file(file_path):
     return tags
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate and read ctags files for a project.")
+    parser.add_argument('-d', '--source_dir', type=str, default="datasets/quantpp", help="Directory containing project source files.")
     args = parser.parse_args()
+    
     make_ctags_file(args.source_dir)
     sleep(0.5)  # Ensure ctags file is written before reading
     read_ctags_file(f"{args.source_dir}/tags")
