@@ -2,13 +2,14 @@ import os
 import csv
 import json
 import argparse
-
+from thefuzz import fuzz # use fuzzy matching for fns between callgrind & ctags
 
 def read_hotspots(hotspots_json):
     hotspots = []
     with open(hotspots_json, 'r') as f:
         hotspots = json.load(f)
     print(hotspots)
+    return hotspots
 
 def read_ctags(ctags_tsv):
     tsv = {}
@@ -29,9 +30,32 @@ def read_ctags(ctags_tsv):
     return tsv
 
 
-def match_hotspot_to_tag():
-    pass
+def match_hotspot_to_tag(hotspots, tags):
+    hotspot_matches = []
+    for h in hotspots:
+        full_fn_name = h['info']['name']
+        full_fn_name = '['.join(full_fn_name.split('[')[:-1])
+        fn_name = full_fn_name.split('(')[0].strip()
+        print(f"{fn_name}")
+        print(f"\t[full name]: {full_fn_name[:]}...")
 
+        for t_name, t_info in tags.items():
+            if fn_name in t_name and t_info['tag_type'] == 'function':
+                fuzzy_match_score = fuzz.partial_ratio(full_fn_name, t_info['tag_declaration'])
+                print(fuzzy_match_score)
+                print(f"\t[found matching tag]: {t_name}")
+                print(f"\t[tag info]: file_name: {t_info['file_name']}, line_n: {t_info['line_n']}")
+                print(f"\t[tag_declaration]: {t_info['tag_declaration']}")
+                hotspot_matches.append({
+                    'fn_name': fn_name,
+                    'full_fn_name': full_fn_name,
+                    'file': t_info['file_name'],
+                    'line_n': t_info['line_n'],
+                    'fn_decl': t_info['tag_declaration'],
+                    'fuzzy_match_score': fuzzy_match_score
+                })
+    print(hotspot_matches)  
+    
 
 def find_hotspot_source():
     pass
@@ -97,7 +121,9 @@ if __name__ == "__main__":
         print(f"[!] {ctags_path} doesn't exist. Run collect_tags.py first.")
         exit()
     
-    read_hotspots(json_path)
-    print(f"{'=' * 20}")
-    read_ctags(ctags_path)
+    hotspots = read_hotspots(json_path)
+    print(f"{'=' * 50}")
+    ctags = read_ctags(ctags_path)
+    print(f"{'=' * 50}")
+    matches = match_hotspot_to_tag(hotspots, ctags)
 
