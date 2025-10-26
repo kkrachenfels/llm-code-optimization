@@ -55,11 +55,34 @@ def match_hotspot_to_tag(hotspots, tags):
                     'fuzzy_match_score': fuzzy_match_score
                 })
     print(hotspot_matches)  
+    return hotspot_matches
     
 
-def find_hotspot_source():
-    pass
+def find_hotspot_sources(hotspot_matches):
+    for hm in hotspot_matches:
+        lines = []
+        try:
+            with open(hm['file'], 'r') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            print(f"[!] Unable to open source file {hm['file']}")
+        
+        start_line_n = int(hm['line_n'])-1
+        end_line_n = None
+        print(lines[start_line_n].strip())
+        open_curly_braces = 0
+        for i, line in enumerate(lines[start_line_n:]):
+            if '{' in line:
+                open_curly_braces += 1
+            if '}' in line:
+                open_curly_braces -= 1
+            if i > 0 and not open_curly_braces:
+                print(i)
+                end_line_n = start_line_n + i
+                break
 
+        fn_lines = lines[start_line_n: end_line_n + 1]
+        print(fn_lines)
 
 def build_prompt(hotspot: str, node: str, calls_hotspot: int, calls_node: int,
                     hotspot_calls_node: int, node_calls_hotspot: int,
@@ -126,4 +149,5 @@ if __name__ == "__main__":
     ctags = read_ctags(ctags_path)
     print(f"{'=' * 50}")
     matches = match_hotspot_to_tag(hotspots, ctags)
-
+    print(f"{'=' * 50}")
+    find_hotspot_sources(matches)
