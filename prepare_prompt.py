@@ -30,59 +30,58 @@ def read_ctags(ctags_tsv):
     return tsv
 
 
-def match_hotspot_to_tag(hotspots, tags):
+def match_hotspot_to_tag(h, tags):
     hotspot_matches = []
-    for h in hotspots:
-        full_fn_name = h['info']['name']
-        full_fn_name = '['.join(full_fn_name.split('[')[:-1])
-        fn_name = full_fn_name.split('(')[0].strip()
-        print(f"{fn_name}")
-        print(f"\t[full name]: {full_fn_name[:]}...")
+    full_fn_name = h['name']
+    full_fn_name = '['.join(full_fn_name.split('[')[:-1])
+    fn_name = '('.join(full_fn_name.split('(')[:-1]).strip()
 
-        for t_name, t_info in tags.items():
-            if fn_name in t_name and t_info['tag_type'] == 'function':
-                fuzzy_match_score = fuzz.partial_ratio(full_fn_name, t_info['tag_declaration'])
-                print(fuzzy_match_score)
-                print(f"\t[found matching tag]: {t_name}")
-                print(f"\t[tag info]: file_name: {t_info['file_name']}, line_n: {t_info['line_n']}")
-                print(f"\t[tag_declaration]: {t_info['tag_declaration']}")
-                hotspot_matches.append({
-                    'fn_name': fn_name,
-                    'full_fn_name': full_fn_name,
-                    'file': t_info['file_name'],
-                    'line_n': t_info['line_n'],
-                    'fn_decl': t_info['tag_declaration'],
-                    'fuzzy_match_score': fuzzy_match_score
-                })
-    print(hotspot_matches)  
+    for t_name, t_info in tags.items():
+        if fn_name in t_name and t_info['tag_type'] == 'function':
+            fuzzy_match_score = fuzz.partial_ratio(full_fn_name, t_info['tag_declaration'])
+            print(f"{fn_name}")
+            print(fuzzy_match_score)
+            print(f"\t[found matching tag]: {t_name}")
+            print(f"\t[tag info]: file_name: {t_info['file_name']}, line_n: {t_info['line_n']}")
+            print(f"\t[tag_declaration]: {t_info['tag_declaration']}")
+            hotspot_matches.append({
+                'fn_name': fn_name,
+                'full_fn_name': full_fn_name,
+                'file': t_info['file_name'],
+                'line_n': t_info['line_n'],
+                'fn_decl': t_info['tag_declaration'],
+                'fuzzy_match_score': fuzzy_match_score
+            })
+    # print(hotspot_matches)  
     return hotspot_matches
     
 
-def find_hotspot_sources(hotspot_matches):
-    for hm in hotspot_matches:
-        lines = []
-        try:
-            with open(hm['file'], 'r') as f:
-                lines = f.readlines()
-        except FileNotFoundError:
-            print(f"[!] Unable to open source file {hm['file']}")
-        
-        start_line_n = int(hm['line_n'])-1
-        end_line_n = None
-        print(lines[start_line_n].strip())
-        open_curly_braces = 0
-        for i, line in enumerate(lines[start_line_n:]):
-            if '{' in line:
-                open_curly_braces += 1
-            if '}' in line:
-                open_curly_braces -= 1
-            if i > 0 and not open_curly_braces:
-                print(i)
-                end_line_n = start_line_n + i
-                break
+def find_hotspot_sources(hotspot_match):
+    lines = []
+    try:
+        with open(hotspot_match['file'], 'r') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        print(f"[!] Unable to open source file {hotspot_match['file']}")
+    
+    start_line_n = int(hotspot_match['line_n'])-1
+    end_line_n = None
+    # print(lines[start_line_n].strip())
+    open_curly_braces = 0
+    for i, line in enumerate(lines[start_line_n:]):
+        if '{' in line:
+            open_curly_braces += 1
+        if '}' in line:
+            open_curly_braces -= 1
+        if i > 0 and not open_curly_braces:
+            # print(i)
+            end_line_n = start_line_n + i
+            break
 
-        fn_lines = lines[start_line_n: end_line_n + 1]
-        print(fn_lines)
+    fn_lines = "".join(lines[start_line_n: end_line_n + 1])
+    print(fn_lines)
+    return fn_lines
+
 
 def build_prompt(hotspot: str, node: str, calls_hotspot: int, calls_node: int,
                     hotspot_calls_node: int, node_calls_hotspot: int,
@@ -148,6 +147,28 @@ if __name__ == "__main__":
     print(f"{'=' * 50}")
     ctags = read_ctags(ctags_path)
     print(f"{'=' * 50}")
-    matches = match_hotspot_to_tag(hotspots, ctags)
-    print(f"{'=' * 50}")
-    find_hotspot_sources(matches)
+
+    for hotspot in hotspots:
+        prompt_dict = {}
+
+        # take first match for now,
+        # can take highest fuzzy match later
+        hs_match = match_hotspot_to_tag(hotspot['info'], ctags)[0]
+        print(f"{'=' * 50}")
+        hs_source = find_hotspot_sources(hs_match)
+
+        for callstack_fn in hotspot["callstack"]:
+            if callstack_fn['type'] == '*':
+                # hotspot fn itself, already matched
+                continue
+
+            # matching fns that call the hotspot:
+            print(f"Matching callstack fn {callstack_fn['name'][:60]}...")
+            try:
+                cs_match = match_hotspot_to_tag(callstack_fn, ctags)[0]
+                cs_source = find_hotspot_sources(cs_match)
+            except IndexError:
+                cs_match = ""
+
+            print(f"{'=' * 50}")
+        

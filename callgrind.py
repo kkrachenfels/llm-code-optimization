@@ -102,7 +102,7 @@ def clean_callgrind_output(annotated_file):
 
 
 
-def get_top_n_hotspots(annotated_file, top_n = 5, verbose=False):
+def get_top_n_hotspots(annotated_file, top_n = 5, include_threshold = 1):
 
     with open(annotated_file, 'r', encoding='utf-8') as file:
         lines = file.readlines()
@@ -125,19 +125,26 @@ def get_top_n_hotspots(annotated_file, top_n = 5, verbose=False):
 
         if ' * ' in line or ' > ' in line or ' < ' in line:
             # cur_fn_lines.append(line)
-            num_calls = int(line.split('(')[0].strip().replace(',', ''))
-            percent_calls = float(line.split('(')[1].split(')')[0].strip().replace('%', ''))
+            num_ir = int(line.split('(')[0].strip().replace(',', ''))
+            percent_ir = float(line.split('(')[1].split(')')[0].strip().replace('%', ''))
             fn_type = line.split(')')[1].strip()[0] # '*' or '>' or '<'
             fn_name = line.split(f' {fn_type} ')[1].strip()
+            if fn_type != '*':
+                print(line)
+                num_calls = int(line.split("x)")[0].split('(')[-1].replace(',',''))
+            else:
+                num_calls = 0
             fn_info = {
                 'name': fn_name,
+                'num_ir': num_ir,
+                'percent_ir': percent_ir,
                 'num_calls': num_calls,
-                'percent_calls': percent_calls,
                 'type': fn_type
             }
             if fn_type == '*':
                 cur_fn_info = fn_info
-            cur_fn_lines.append(fn_info)
+            if percent_ir >= include_threshold:
+                cur_fn_lines.append(fn_info)
 
     if len(cur_fn_lines) > 0 and len(cur_fn_info) > 0:
         fn_callstacks_by_percent[cur_fn_info['name']] = {
@@ -163,7 +170,8 @@ def run_callgrind_pipeline(
     executable_path,
     executable_args,
     top_n = 1,
-    verbose=False
+    include_threshold = 1,
+    verbose = False
 ):
     callgrind_output = f'{project_dir}/callgrind.out'
     annotated_output = f'{project_dir}/callgrind_annotated.out'
@@ -172,7 +180,7 @@ def run_callgrind_pipeline(
     # run_under_callgrind(executable_path, callgrind_output, executable_args)
     annotate_callgrind_output(callgrind_output, annotated_output)
     clean_callgrind_output(annotated_output)
-    hotspots = get_top_n_hotspots(annotated_output, top_n)
+    hotspots = get_top_n_hotspots(annotated_output, top_n, include_threshold)
     
     if not verbose:
         print("Identified Hotspots:")
@@ -191,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument('-e', '--exe', type=str, default="datasets/quantpp/quant", help="Path to the executable to be profiled.")
     parser.add_argument('-a', '--exe-args', nargs='*', default=['datasets/quantpp/data/table.csv'], help="Additional arguments to pass to the executable.")
     parser.add_argument('-n', '--top-n', type=int, default=1, help="Number of top hotspots to identify.")
+    parser.add_argument('-i', '--include-threshold', type=int, default=1, help="Percent of IR at which to include the function")
     parser.add_argument('-v', '--verbose', action='store_true', help="print full JSON stacktrace of hotspots rather than singular fns")
     args = parser.parse_args()
 
@@ -199,5 +208,6 @@ if __name__ == "__main__":
         executable_path=args.exe,
         executable_args=args.exe_args,
         top_n=args.top_n,
+        include_threshold=args.include_threshold,
         verbose=args.verbose
     )
