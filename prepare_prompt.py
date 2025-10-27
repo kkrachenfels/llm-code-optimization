@@ -83,44 +83,44 @@ def find_hotspot_sources(hotspot_match):
     return fn_lines
 
 
-def build_prompt(hotspot: str, 
+def build_prompt(hotspot: str, hotspot_code_snippet: str, 
                     caller_nodes: list[str], caller_nodes_times: list[int], caller_code_snippets: list[str],
                     callee_nodes: list[str], callee_nodes_times: list[int], callee_code_snippets: list[str],
-                    hotspot_code_snippet: str, 
-                    node_code_snippets: list[str], class_code_snippets: list[str], 
-                    strategy: str) -> str:
-    prompt = """
-    Task: As a programmer, you need to optimize the hotspot {hotspot}.
-    Use a Chain-of-Thought approach to understand the code and its contexts,
-    and then optimize the given hotspot function 
-    
-    Context:
-    When the project is running:
+                    # node_code_snippets: list[str], class_code_snippets: list[str], 
+                    # strategy: str
+                    ) -> str:
+    prompt = f"""
+Task: As a programmer, you need to optimize the hotspot {hotspot}.
+Use a Chain-of-Thought approach to understand the code and its contexts,
+and then optimize the given hotspot function 
+
+Context:
+When the project is running:
     """
 
-    for i, node, times in enumerate(zip(caller_nodes, caller_nodes_times)):
+    for i, (node, times) in enumerate(zip(caller_nodes, caller_nodes_times)):
         prompt += f"- The function {node} calls hotspot {times} times:\n"
         if caller_code_snippets[i]:
-            prompt += "```code snippet```"
+            prompt += "```code snippet```\n"
             prompt += caller_code_snippets[i]
-            prompt += "```code snippet```"
+            prompt += "```code snippet```\n"
 
-    for i, node, times in enumerate(zip(callee_nodes, callee_nodes_times)):
+    for i, (node, times) in enumerate(zip(callee_nodes, callee_nodes_times)):
         prompt += f"- The hotspot calls {node} function {times} times:\n"
         if callee_code_snippets[i]:
-            prompt += "```code snippet```"
+            prompt += "```code snippet```\n"
             prompt += callee_code_snippets[i]
-            prompt += "```code snippet```"
+            prompt += "```code snippet```\n"
     
     prompt += f"""
-    - Based on these contexts, optimize the hotspot function {hotspot}:
-    ```code snippet```
-    {hotspot_code_snippet if hotspot_code_snippet else ''}
-    ```code snippet```
-    Here is the response template:
-    ## Optimized hotspot function:
-    ## Affected functions:
-    ## Optimization strategy:
+- Based on these contexts, optimize the hotspot function {hotspot}:
+```code snippet```
+{hotspot_code_snippet if hotspot_code_snippet else ''}
+```code snippet```
+Here is the response template:
+## Optimized hotspot function:
+## Affected functions:
+## Optimization strategy:
     """
 
     """
@@ -138,7 +138,8 @@ def build_prompt(hotspot: str,
     """
 
     print(prompt)
-    return prompt
+    with open('prompt.md', 'w') as f:
+        f.write(prompt)
 
 
 if __name__ == "__main__":
@@ -176,7 +177,11 @@ if __name__ == "__main__":
         print(f"{'=' * 50}")
         hs_source = find_hotspot_sources(hs_match)
 
+        prompt_dict['hotspot'] = hs_match['fn_name']
+        prompt_dict['hotspot_code_snippet'] = hs_source
+
         for callstack_fn in hotspot["callstack"]:
+
             if callstack_fn['type'] == '*':
                 # hotspot fn itself, already matched
                 continue
@@ -187,7 +192,41 @@ if __name__ == "__main__":
                 cs_match = match_hotspot_to_tag(callstack_fn, ctags)[0]
                 cs_source = find_hotspot_sources(cs_match)
             except IndexError:
-                cs_match = ""
+                cs_match = {'fn_name': callstack_fn['name']}
+                cs_source = None
+
+            if callstack_fn['type'] == '<':
+                # caller:
+                if 'caller_nodes' in prompt_dict:
+                    prompt_dict['caller_nodes'].append(cs_match['fn_name'])
+                    prompt_dict['caller_nodes_times'].append(callstack_fn['num_calls'])
+                    prompt_dict['caller_code_snippets'].append(cs_source)
+                else:
+                    prompt_dict['caller_nodes'] = [cs_match['fn_name']]
+                    prompt_dict['caller_nodes_times'] = [callstack_fn['num_calls']]
+                    prompt_dict['caller_code_snippets'] = [cs_source]
+
+            else:
+                # callee
+                if 'callee_nodes' in prompt_dict:
+                    prompt_dict['callee_nodes'].append(cs_match['fn_name'])
+                    prompt_dict['callee_nodes_times'].append(callstack_fn['num_calls'])
+                    prompt_dict['callee_code_snippets'].append(cs_source)
+                else:
+                    prompt_dict['callee_nodes'] = [cs_match['fn_name']]
+                    prompt_dict['callee_nodes_times'] = [callstack_fn['num_calls']]
+                    prompt_dict['callee_code_snippets'] = [cs_source]
 
             print(f"{'=' * 50}")
+
+    build_prompt(
+        prompt_dict['hotspot'],
+        prompt_dict['hotspot_code_snippet'],
+        prompt_dict['caller_nodes'],
+        prompt_dict['caller_nodes_times'],
+        prompt_dict['caller_code_snippets'],
+        prompt_dict['callee_nodes'],
+        prompt_dict['callee_nodes_times'],
+        prompt_dict['callee_code_snippets'],
+    )
         
