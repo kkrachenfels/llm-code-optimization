@@ -27,21 +27,11 @@ def annotate_callgrind_output(callgrind_file, annotated_file):
     with open(annotated_file, 'w', encoding='utf-8') as outfile:
         subprocess.run([
             'callgrind_annotate',
-            '--auto=yes',
+            '--auto=no', # skip this for now
             '--tree=both',
             '--inclusive=yes',
             callgrind_file
         ], stdout=outfile)
-
-
-def replace_in_file(file_path, old_string, new_string):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        content = file.read()
-
-    updated_content = content.replace(old_string, new_string)
-
-    with open(file_path, 'w', encoding='utf-8') as file:
-        file.write(updated_content)
 
 
 def clean_callgrind_output(annotated_file):
@@ -99,7 +89,6 @@ def clean_callgrind_output(annotated_file):
 
     with open(annotated_file, 'w', encoding='utf-8') as file:
         file.writelines(cleaned_lines)
-
 
 
 def get_top_n_hotspots(annotated_file, top_n = 5, include_threshold = 1):
@@ -177,7 +166,7 @@ def run_callgrind_pipeline(
     annotated_output = f'{project_dir}/callgrind_annotated.out'
     hotspot_dump = f'{project_dir}/hotspots.json'
 
-    # run_under_callgrind(executable_path, callgrind_output, executable_args)
+    run_under_callgrind(executable_path, callgrind_output, executable_args)
     annotate_callgrind_output(callgrind_output, annotated_output)
     clean_callgrind_output(annotated_output)
     hotspots = get_top_n_hotspots(annotated_output, top_n, include_threshold)

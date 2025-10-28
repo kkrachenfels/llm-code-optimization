@@ -8,11 +8,11 @@ def read_hotspots(hotspots_json):
     hotspots = []
     with open(hotspots_json, 'r') as f:
         hotspots = json.load(f)
-    print(hotspots)
+    # print(hotspots)
     return hotspots
 
 def read_ctags(ctags_tsv):
-    tsv = {}
+    tsv = []
     headers = []
     with open(ctags_tsv, 'r', newline='') as csvfile:
         csv_reader = csv.reader(csvfile, delimiter='\t')
@@ -25,8 +25,9 @@ def read_ctags(ctags_tsv):
                     row_data[h] = r
                 # only get function tags for now
                 if row_data['tag_type'] == 'function':
-                    tsv[row_data['tag_name']] = row_data
-    print(tsv)
+                    # tsv[row_data['tag_name']] = row_data
+                    tsv.append((row_data['tag_name'], row_data))
+    # print(tsv)
     return tsv
 
 
@@ -35,9 +36,18 @@ def match_hotspot_to_tag(h, tags):
     full_fn_name = h['name']
     full_fn_name = '['.join(full_fn_name.split('[')[:-1])
     fn_name = '('.join(full_fn_name.split('(')[:-1]).strip()
+    try:
+        short_fn_name = fn_name.split('.c:')[-1].split()[0].strip()
+        if short_fn_name != '':
+            fn_name = short_fn_name
+    except:
+        pass
+    if fn_name == '': # then it's a c function, try getting the function name elsewise
+        fn_name = full_fn_name.split('.c:')[1].split()[0].strip()
+    print(f"\t Using fn_name: {fn_name}")
 
-    for t_name, t_info in tags.items():
-        if fn_name in t_name and t_info['tag_type'] == 'function':
+    for (t_name, t_info) in tags:
+        if (fn_name in t_name or t_name in fn_name) and t_info['tag_type'] == 'function':
             fuzzy_match_score = fuzz.partial_ratio(full_fn_name, t_info['tag_declaration'])
             print(f"{fn_name}")
             print(fuzzy_match_score)
@@ -89,8 +99,7 @@ def build_prompt(hotspot: str, hotspot_code_snippet: str,
                     # node_code_snippets: list[str], class_code_snippets: list[str], 
                     # strategy: str
                     ) -> str:
-    prompt = f"""
-Task: As a programmer, you need to optimize the hotspot {hotspot}.
+    prompt = f"""Task: As a programmer, you need to optimize the hotspot {hotspot}.
 Use a Chain-of-Thought approach to understand the code and its contexts,
 and then optimize the given hotspot function 
 
@@ -117,8 +126,10 @@ When the project is running:
 ```code snippet```
 {hotspot_code_snippet if hotspot_code_snippet else ''}
 ```code snippet```
+as well as any of the above functions that call the hotspot or are called by the hotspot.
+
 Here is the response template:
-## Optimized hotspot function:
+## Optimized functions (hotspot and/or surrounding):
 ## Affected functions:
 ## Optimization strategy:
     """
@@ -141,23 +152,21 @@ Here is the response template:
     with open('prompt.md', 'w') as f:
         f.write(prompt)
 
+    return prompt
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="match callgrind hotspots to locations in source code, craft prompt")
-    parser.add_argument('-d', '--project-dir', type=str, default="datasets/quantpp", help="Path to the project directory where profiling info is stored")
-    args = parser.parse_args()
 
-    if not os.path.isdir(args.project_dir):
-        print(f"[!] {args.project_dir} is not a valid directory or doesn't exist.")
+def create_prompt(project_dir):
+    if not os.path.isdir(project_dir):
+        print(f"[!] {project_dir} is not a valid directory or doesn't exist.")
         exit()
     
-    json_path = f"{args.project_dir}/hotspots.json"
+    json_path = f"{project_dir}/hotspots.json"
 
     if not os.path.exists(json_path):
         print(f"[!] {json_path} doesn't exist. Run callgrind.py first.")
         exit()
 
-    ctags_path = f"{args.project_dir}/tags.tsv"
+    ctags_path = f"{project_dir}/tags.tsv"
 
     if not os.path.exists(ctags_path):
         print(f"[!] {ctags_path} doesn't exist. Run collect_tags.py first.")
@@ -219,7 +228,7 @@ if __name__ == "__main__":
 
             print(f"{'=' * 50}")
 
-    build_prompt(
+    final_prompt = build_prompt(
         prompt_dict['hotspot'],
         prompt_dict['hotspot_code_snippet'],
         prompt_dict['caller_nodes'],
@@ -229,4 +238,14 @@ if __name__ == "__main__":
         prompt_dict['callee_nodes_times'],
         prompt_dict['callee_code_snippets'],
     )
+
+    return final_prompt
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="match callgrind hotspots to locations in source code, craft prompt")
+    parser.add_argument('-d', '--project-dir', type=str, default="datasets/quantpp", help="Path to the project directory where profiling info is stored")
+    args = parser.parse_args()
+
+    create_prompt(args.project_dir)
         
