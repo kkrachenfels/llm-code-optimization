@@ -23,7 +23,9 @@ def make_ctags_file(source_dir):
     subprocess.run([
         'ctags',
         '-R',
-        '--exclude=Makefile',
+        '--exclude=*Makefile,',
+        '--exclude=*.html',
+        '--exclude=*.js',
         '-h',
         '.h.H.hh.hpp.hxx.h.c.cpp.cxx',
         '--format=2',
@@ -46,27 +48,31 @@ def read_ctags_file(file_path):
 
     with open(file_path, 'r') as f:
         while (line := f.readline()):
-            tag = []
+            tag = [''] * 6
             # Skip header lines starting with '!'
             if line.startswith('!'):
                 continue
-            line = line.replace("/^", "").replace("$/;\"", "").strip("\n")
-            print(line)
-            tag += line.split('\t')
-            for i in range(len(tag)):
-                try:
-                    if tag[i].strip() == '':
-                        tag[i:] = tag[i+1:]
-                except:
-                    break
-            for i in range(len(tag)):
-                tag[i] = tag[i].strip().strip(';{:')
-                if i == 4:
-                    try:
-                        tag[i] = int((tag[i]).replace("line:", ""))
-                    except:
-                        pass
-            tag += [''] * (6 - len(tag))  # Pad to ensure complete rows
+            
+            line_split = line.split("/^")
+            tag_other_info = line_split[1].split("/;\"")
+            tag_info = tag_other_info[0]
+            tag[2] = tag_info.strip(';{:$').strip().replace('\t', ' ')
+
+            tag_first_parts = line_split[0].split('\t')
+            tag[0] = tag_first_parts[0]
+            tag[1] = tag_first_parts[1]
+
+            tag_last_parts = tag_other_info[1].strip().strip('\t').split('\t')
+            tag[3] = tag_last_parts[0]
+            tag[4] = tag_last_parts[1]
+            if len(tag_last_parts) > 2:
+                tag[5] = tag_last_parts[2]
+
+            try:
+                tag[4] = int((tag[4]).replace("line:", ""))
+            except:
+                print(f"[!] Unable to get line # from tag {tag[0]} with line {tag[4]}")
+            
             tags.append(tag)
     
     output_file = file_path.replace('tags', 'tags.tsv')
