@@ -4,3 +4,5 @@ datasets/
 *.svg
 
 config.py
+prompts/
+responses/
