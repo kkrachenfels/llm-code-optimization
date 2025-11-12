@@ -15,7 +15,7 @@ class HotspotOptimizer:
         if all_prompts:
             for i, prompt in enumerate(self.prompts):
                 self.responses.append(self.client.chat.completions.create(
-                    model="gpt-5-nano",  # nano for now to save $$$ lol
+                    model="gpt-5-mini",  
                     messages=[{"role": "user", "content": prompt}],
                 ))
                 self.responses[i] = self.responses[i].choices[0].message.content
@@ -23,7 +23,7 @@ class HotspotOptimizer:
             print(self.responses[i])
         else:
             self.responses.append(self.client.chat.completions.create(
-                model="gpt-5-nano",  # nano for now to save $$$ lol
+                model="gpt-5-mini", 
                 messages=[{"role": "user", "content": self.prompts[prompt_no]}],
                 ).choices[0].message.content
             )
@@ -38,4 +38,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     h = HotspotOptimizer(args.project_dir)
-    h.query_llm(prompt_no=args.prompt_no)
+    responses = h.query_llm(prompt_no=args.prompt_no)
+
+    for response in responses:
+        with open(f'responses/response_{args.prompt_no}.md', 'w') as f:
+            f.write(response)

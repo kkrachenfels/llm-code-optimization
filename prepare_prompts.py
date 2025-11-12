@@ -141,8 +141,9 @@ When the project is running:
 ```cpp
 {hotspot_code_snippet if hotspot_code_snippet else ''}
 ```
-you can also optimize any of the above functions that call the hotspot or are called by the hotspot.
-Avoid changing function signatures as other code paths not in the hot path may call these functions as well.
+IMPORTANT NOTES:
+- you can also optimize any of the above functions that call the hotspot or are called by the hotspot.
+- Avoid changing any function signatures as other code paths not in the hot path may call these functions as well.
 
 Here is the response template:
 ## Optimized function code (hotspot and/or surrounding):
@@ -165,7 +166,7 @@ Here is the response template:
     """
 
     # print(prompt)
-    with open(f'prompt_{hotspot_n}.md', 'w') as f:
+    with open(f'prompts/prompt_{hotspot_n}.md', 'w') as f:
         f.write(prompt)
 
     return prompt
