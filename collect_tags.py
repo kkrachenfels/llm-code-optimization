@@ -23,7 +23,7 @@ def make_ctags_file(source_dir):
     subprocess.run([
         'ctags',
         '-R',
-        '--exclude=*Makefile,',
+        '--exclude=*Makefile',
         '--exclude=*.html',
         '--exclude=*.js',
         '-h',

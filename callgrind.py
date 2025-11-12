@@ -16,7 +16,7 @@ def run_under_callgrind(executable_path, output_file, args=[]):
     subprocess.run(command)
 
 
-def annotate_callgrind_output(callgrind_file, annotated_file):
+def annotate_callgrind_output(callgrind_file, annotated_file, project_dir):
     """
     Annotates the Callgrind output file with source code information.
     
@@ -30,6 +30,7 @@ def annotate_callgrind_output(callgrind_file, annotated_file):
             '--auto=no', # skip this for now
             '--tree=both',
             '--inclusive=yes',
+            f'--include={project_dir}',
             callgrind_file
         ], stdout=outfile)
 
@@ -167,7 +168,7 @@ def run_callgrind_pipeline(
     hotspot_dump = f'{project_dir}/hotspots.json'
 
     run_under_callgrind(executable_path, callgrind_output, executable_args)
-    annotate_callgrind_output(callgrind_output, annotated_output)
+    annotate_callgrind_output(callgrind_output, annotated_output, project_dir)
     clean_callgrind_output(annotated_output)
     hotspots = get_top_n_hotspots(annotated_output, top_n, include_threshold)
     

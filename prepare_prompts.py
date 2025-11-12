@@ -34,22 +34,36 @@ def read_ctags(ctags_tsv):
 def match_hotspot_to_tag(h, tags):
     hotspot_matches = []
     full_fn_name = h['name']
-    full_fn_name = '['.join(full_fn_name.split('[')[:-1])
+    if '[' in full_fn_name:
+        full_fn_name = '['.join(full_fn_name.split('[')[:-1])
     fn_name = '('.join(full_fn_name.split('(')[:-1]).strip()
+    print(fn_name)
     try:
-        short_fn_name = fn_name.split('.c:')[-1].split()[0].strip()
+        if '.cpp:' in fn_name:
+            short_fn_name = fn_name.split('.cpp:')[-1].split()[0].strip()
+            short_fn_name = short_fn_name.split("::")[-1]
+        elif '.c:' in fn_name:
+            short_fn_name = fn_name.split('.c:')[-1].split()[0].strip()
         if short_fn_name != '':
             fn_name = short_fn_name
     except:
         pass
-    if fn_name == '': # then it's a c function, try getting the function name elsewise
-        fn_name = full_fn_name.split('.c:')[1].split()[0].strip()
+    if fn_name == '': # try getting fn name from full path to fn
+        try:
+            if '.cpp:' in full_fn_name:
+                fn_name = full_fn_name.split('.cpp:')[-1].split()[0].strip()
+                fn_name = fn_name.split("::")[-1]
+            elif '.c:' in full_fn_name:
+                fn_name = full_fn_name.split('.c:')[-1].split()[0].strip()
+        except:
+            return
     print(f"\t Using fn_name: {fn_name}")
+    print(h['name'])
 
     for (t_name, t_info) in tags:
         if (fn_name in t_name or t_name in fn_name) and t_info['tag_type'] == 'function':
-            fuzzy_match_score = fuzz.partial_ratio(full_fn_name, t_info['tag_declaration'])
-            print(f"{fn_name}")
+            print(f"{t_info['file_name']} {t_info['tag_declaration']}")
+            fuzzy_match_score = fuzz.partial_ratio(h['name'], f"{t_info['file_name']} {t_info['tag_declaration']}")
             print(fuzzy_match_score)
             print(f"\t[found matching tag]: {t_name}")
             print(f"\t[tag info]: file_name: {t_info['file_name']}, line_n: {t_info['line_n']}")
@@ -97,7 +111,8 @@ def build_prompt(hotspot: str, hotspot_code_snippet: str,
                     caller_nodes: list[str], caller_nodes_times: list[int], caller_code_snippets: list[str],
                     callee_nodes: list[str], callee_nodes_times: list[int], callee_code_snippets: list[str],
                     # node_code_snippets: list[str], class_code_snippets: list[str], 
-                    # strategy: str
+                    # strategy: str,
+                    hotspot_n: int
                     ) -> str:
     prompt = f"""Task: As a programmer, you need to optimize the hotspot {hotspot}.
 Use a Chain-of-Thought approach to understand the code and its contexts,
@@ -110,26 +125,27 @@ When the project is running:
     for i, (node, times) in enumerate(zip(caller_nodes, caller_nodes_times)):
         prompt += f"- The function {node} calls hotspot {times} times:\n"
         if caller_code_snippets[i]:
-            prompt += "```code snippet```\n"
+            prompt += "```cpp\n"
             prompt += caller_code_snippets[i]
-            prompt += "```code snippet```\n"
+            prompt += "```\n"
 
     for i, (node, times) in enumerate(zip(callee_nodes, callee_nodes_times)):
         prompt += f"- The hotspot calls {node} function {times} times:\n"
         if callee_code_snippets[i]:
-            prompt += "```code snippet```\n"
+            prompt += "```cpp\n"
             prompt += callee_code_snippets[i]
-            prompt += "```code snippet```\n"
+            prompt += "```\n"
     
     prompt += f"""
 - Based on these contexts, optimize the hotspot function {hotspot}:
-```code snippet```
+```cpp
 {hotspot_code_snippet if hotspot_code_snippet else ''}
-```code snippet```
-as well as any of the above functions that call the hotspot or are called by the hotspot.
+```
+you can also optimize any of the above functions that call the hotspot or are called by the hotspot.
+Avoid changing function signatures as other code paths not in the hot path may call these functions as well.
 
 Here is the response template:
-## Optimized functions (hotspot and/or surrounding):
+## Optimized function code (hotspot and/or surrounding):
 ## Affected functions:
 ## Optimization strategy:
     """
@@ -148,14 +164,14 @@ Here is the response template:
     
     """
 
-    print(prompt)
-    with open('prompt.md', 'w') as f:
+    # print(prompt)
+    with open(f'prompt_{hotspot_n}.md', 'w') as f:
         f.write(prompt)
 
     return prompt
 
 
-def create_prompt(project_dir):
+def create_prompts(project_dir):
     if not os.path.isdir(project_dir):
         print(f"[!] {project_dir} is not a valid directory or doesn't exist.")
         exit()
@@ -176,18 +192,35 @@ def create_prompt(project_dir):
     print(f"{'=' * 50}")
     ctags = read_ctags(ctags_path)
     print(f"{'=' * 50}")
+    final_prompts = []
 
-    for hotspot in hotspots:
-        prompt_dict = {}
+    for hotspot_n, hotspot in enumerate(hotspots):
+        prompt_dict = {
+            'hotspot': hotspot['info']['name'],
+            'hotspot_code_snippet': None,
+            'caller_nodes': [],
+            'caller_nodes_times': [],
+            'caller_code_snippets': [],
+            'callee_nodes': [],
+            'callee_nodes_times': [],
+            'callee_code_snippets': [],
+        }
 
         # take first match for now,
         # can take highest fuzzy match later
-        hs_match = match_hotspot_to_tag(hotspot['info'], ctags)[0]
-        print(f"{'=' * 50}")
-        hs_source = find_hotspot_sources(hs_match)
-
-        prompt_dict['hotspot'] = hs_match['fn_name']
-        prompt_dict['hotspot_code_snippet'] = hs_source
+        try:
+            matches = match_hotspot_to_tag(hotspot['info'], ctags)
+            print(len(matches))
+            hs_match = matches[0]
+            for match in matches[1:]:
+                if match['fuzzy_match_score'] > hs_match['fuzzy_match_score']:
+                    hs_match = match
+            print(f"{'=' * 50}")
+            hs_source = find_hotspot_sources(hs_match)
+            prompt_dict['hotspot'] = hs_match['fn_name']
+            prompt_dict['hotspot_code_snippet'] = hs_source
+        except:
+            pass
 
         for callstack_fn in hotspot["callstack"]:
 
@@ -198,7 +231,12 @@ def create_prompt(project_dir):
             # matching fns that call the hotspot:
             print(f"Matching callstack fn {callstack_fn['name'][:60]}...")
             try:
-                cs_match = match_hotspot_to_tag(callstack_fn, ctags)[0]
+                cs_matches = match_hotspot_to_tag(callstack_fn, ctags)
+                cs_match = cs_matches[0]
+                print(len(cs_matches))
+                for match in cs_matches[1:]:
+                    if match['fuzzy_match_score'] > cs_match['fuzzy_match_score']:
+                        cs_match = match
                 cs_source = find_hotspot_sources(cs_match)
             except IndexError:
                 cs_match = {'fn_name': callstack_fn['name']}
@@ -206,40 +244,31 @@ def create_prompt(project_dir):
 
             if callstack_fn['type'] == '<':
                 # caller:
-                if 'caller_nodes' in prompt_dict:
-                    prompt_dict['caller_nodes'].append(cs_match['fn_name'])
-                    prompt_dict['caller_nodes_times'].append(callstack_fn['num_calls'])
-                    prompt_dict['caller_code_snippets'].append(cs_source)
-                else:
-                    prompt_dict['caller_nodes'] = [cs_match['fn_name']]
-                    prompt_dict['caller_nodes_times'] = [callstack_fn['num_calls']]
-                    prompt_dict['caller_code_snippets'] = [cs_source]
-
+                prompt_dict['caller_nodes'].append(cs_match['fn_name'])
+                prompt_dict['caller_nodes_times'].append(callstack_fn['num_calls'])
+                prompt_dict['caller_code_snippets'].append(cs_source)
             else:
                 # callee
-                if 'callee_nodes' in prompt_dict:
-                    prompt_dict['callee_nodes'].append(cs_match['fn_name'])
-                    prompt_dict['callee_nodes_times'].append(callstack_fn['num_calls'])
-                    prompt_dict['callee_code_snippets'].append(cs_source)
-                else:
-                    prompt_dict['callee_nodes'] = [cs_match['fn_name']]
-                    prompt_dict['callee_nodes_times'] = [callstack_fn['num_calls']]
-                    prompt_dict['callee_code_snippets'] = [cs_source]
+                prompt_dict['callee_nodes'].append(cs_match['fn_name'])
+                prompt_dict['callee_nodes_times'].append(callstack_fn['num_calls'])
+                prompt_dict['callee_code_snippets'].append(cs_source)
 
             print(f"{'=' * 50}")
 
-    final_prompt = build_prompt(
-        prompt_dict['hotspot'],
-        prompt_dict['hotspot_code_snippet'],
-        prompt_dict['caller_nodes'],
-        prompt_dict['caller_nodes_times'],
-        prompt_dict['caller_code_snippets'],
-        prompt_dict['callee_nodes'],
-        prompt_dict['callee_nodes_times'],
-        prompt_dict['callee_code_snippets'],
-    )
+        final_prompt = build_prompt(
+            prompt_dict['hotspot'],
+            prompt_dict['hotspot_code_snippet'],
+            prompt_dict['caller_nodes'],
+            prompt_dict['caller_nodes_times'],
+            prompt_dict['caller_code_snippets'],
+            prompt_dict['callee_nodes'],
+            prompt_dict['callee_nodes_times'],
+            prompt_dict['callee_code_snippets'],
+            hotspot_n
+        )
+        final_prompts.append(final_prompt)
 
-    return final_prompt
+    return final_prompts
 
 
 if __name__ == "__main__":
@@ -247,5 +276,5 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--project-dir', type=str, default="datasets/quantpp", help="Path to the project directory where profiling info is stored")
     args = parser.parse_args()
 
-    create_prompt(args.project_dir)
+    create_prompts(args.project_dir)
         

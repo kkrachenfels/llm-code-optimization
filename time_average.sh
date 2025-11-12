@@ -1,15 +1,17 @@
 #!/bin/bash
 
-if [ "$#" -lt 1 ]; then
-  echo "Usage: $0 program [args...]"
+if [ "$#" -lt 2 ]; then
+  echo "Usage: $0 directory program [args...]"
   exit 1
 fi
 
+directory="$1"
+shift
 program="$1"
 shift
 args=("$@")
 
-runs=5
+runs=10
 
 total_real=0
 total_user=0
@@ -34,9 +36,13 @@ convert_to_seconds() {
   echo "$total"
 }
 
+original_dir=$(pwd)
+
 for i in $(seq 1 $runs); do
+  cd "$directory" || { echo "Failed to cd into $directory"; exit 1; }
   # output time results
-  output=$( { time "$program" "${args[@]}" 1>/dev/null; } 2>&1 )
+  output=$( { time "$program" "${args[@]}" 1>./timed.log; } 2>&1 )
+  cd "$original_dir" || { echo "Failed to cd back to $original_dir"; exit 1; }
   
   echo "Run $i output:"
   echo "$output"
