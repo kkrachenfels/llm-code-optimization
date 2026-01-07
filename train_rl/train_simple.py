@@ -11,6 +11,7 @@ Example:
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
 from src.simple_trainer import SimpleCodeOptimizationTrainer
@@ -73,6 +74,12 @@ def parse_args():
         action="store_true",
         help="Use 8-bit quantization to reduce memory usage"
     )
+    parser.add_argument(
+        "--gpus",
+        type=str,
+        default=None,
+        help="Comma-separated list of GPU IDs to use (e.g., '2,3' for GPUs 2 and 3)"
+    )
 
     # Output arguments
     parser.add_argument(
@@ -93,6 +100,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Set GPU devices before any CUDA initialization
+    if args.gpus is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+        logger.info(f"Using GPUs: {args.gpus}")
 
     logger.info("=" * 80)
     logger.info("Simple RL-Based Code Optimization Training (REINFORCE)")
