@@ -256,6 +256,9 @@ Optimized code:
         for step in range(num_steps):
             logger.info(f"\n--- Step {step + 1}/{num_steps} ---")
 
+            # Track best runtime before step to detect improvement
+            best_runtime_before = self.reward_function.best_runtime
+
             metrics = self.train_step()
 
             logger.info(
@@ -265,11 +268,12 @@ Optimized code:
                 f"best_speedup={metrics['speedup']:.2f}x"
             )
 
-            # Save checkpoint
-            if (step + 1) % save_every == 0:
-                checkpoint_path = self.output_dir / f"checkpoint-{step + 1}"
+            # Save checkpoint if reward > 1 and we improved best runtime
+            best_runtime_improved = metrics['best_runtime'] < best_runtime_before
+            if metrics['max_reward'] > 1 and best_runtime_improved:
+                checkpoint_path = self.output_dir / f"checkpoint-step{step + 1}-reward{metrics['max_reward']:.2f}"
                 self.save_checkpoint(checkpoint_path)
-                logger.info(f"Saved checkpoint to {checkpoint_path}")
+                logger.info(f"Saved checkpoint to {checkpoint_path} (max_reward={metrics['max_reward']:.3f}, new best runtime={metrics['best_runtime']:.2f}μs)")
 
         logger.info("Training complete!")
 
