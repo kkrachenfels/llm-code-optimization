@@ -27,7 +27,8 @@ def annotate_callgrind_output(callgrind_file, annotated_file, project_dir):
     with open(annotated_file, 'w', encoding='utf-8') as outfile:
         subprocess.run([
             'callgrind_annotate',
-            '--auto=no', # skip this for now
+            '--auto=yes', # skip this for now
+            '--context=16',
             '--tree=both',
             '--inclusive=yes',
             f'--include={project_dir}',
@@ -102,6 +103,9 @@ def get_top_n_hotspots(annotated_file, top_n = 5, include_threshold = 1):
     cur_fn_info = {}
 
     for line in lines:
+        if 'Auto-annotated' in line:
+            break
+        
         line = line.strip()
         if line == '\n' or line == '':
             if len(cur_fn_lines) > 0 and len(cur_fn_info) > 0:

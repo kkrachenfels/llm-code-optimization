@@ -1,8 +1,17 @@
-datasets/
 *.dot
 *.png
 *.svg
+*.log
+*.ipynb
 
 config.py
+
+datasets/
 prompts/
 responses/
+results/
+train_rl_cpu/
+RL/
+.cursor/
+.vscode/
+__pycache__/
