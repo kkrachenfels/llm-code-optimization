@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 class CppCompiler:
     """Handles C++ code compilation and execution."""
 
+    # Local temp directory for compilation artifacts
+    LOCAL_TMP_DIR = Path(__file__).parent.parent / "tmp"
+
     def __init__(
         self,
         compiler: str = "g++",
@@ -51,7 +54,10 @@ class CppCompiler:
         Returns:
             Tuple of (success, average_runtime_microseconds, error_message)
         """
-        with tempfile.TemporaryDirectory() as tmpdir:
+        # Ensure local tmp directory exists
+        self.LOCAL_TMP_DIR.mkdir(exist_ok=True)
+
+        with tempfile.TemporaryDirectory(dir=self.LOCAL_TMP_DIR) as tmpdir:
             source_path = os.path.join(tmpdir, "program.cpp")
             binary_path = os.path.join(tmpdir, "program")
 

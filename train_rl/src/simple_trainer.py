@@ -61,22 +61,23 @@ class SimpleCodeOptimizationTrainer:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        model_kwargs = {}
+        model_kwargs = {
+            "device_map": "auto",  # Automatically distribute across available GPUs
+            "torch_dtype": torch.bfloat16,  # Use bf16 for better numerical stability than fp16
+        }
         if use_8bit:
             model_kwargs["load_in_8bit"] = True
-            model_kwargs["device_map"] = "auto"
+            del model_kwargs["torch_dtype"]  # 8-bit handles its own dtype
 
+        logger.info(f"Loading model with device_map='auto' to use all available GPUs...")
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             **model_kwargs
         )
 
-        # Setup device
-        if not use_8bit:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.model = self.model.to(self.device)
-        else:
-            self.device = self.model.device
+        # With device_map="auto", model is already on device(s)
+        self.device = self.model.device
+        logger.info(f"Model loaded. Device: {self.device}, Memory footprint: {self.model.get_memory_footprint() / 1e9:.2f} GB")
 
         self.model.train()
 
@@ -116,16 +117,51 @@ class SimpleCodeOptimizationTrainer:
 
     def create_prompt(self, code: str) -> str:
         """Create optimization prompt for the model."""
-        prompt = f"""<|im_start|>system
-You are a C++ code optimizer. You ONLY output valid C++ code. No explanations, no markdown, no comments about changes. Just the raw C++ code.
+        # Detect if this is C or C++ code
+        is_cpp = 'iostream' in code or 'std::' in code or 'class ' in code or 'namespace' in code
+        lang = "C++" if is_cpp else "C"
+
+        # Detect if this is polybench code
+        is_polybench = 'polybench.h' in code or 'POLYBENCH_' in code
+
+        if is_polybench:
+            prompt = f"""<|im_start|>system
+You are a C code optimizer specializing in high-performance computing. You ONLY output valid C code. No explanations, no markdown. Just the raw optimized C code.
 <|im_end|>
 <|im_start|>user
-Optimize this C++ code for maximum runtime performance:
+Optimize this PolyBench/C code for maximum runtime performance.
+
+Context about PolyBench macros (do not modify these, just use them):
+- DATA_TYPE is typically double
+- POLYBENCH_2D(arr,N,M,n,m) declares a 2D array
+- POLYBENCH_1D(arr,N,n) declares a 1D array
+- Array indices use standard C syntax: arr[i][j]
+
+Focus on optimizing:
+- Loop ordering for cache efficiency
+- Loop tiling/blocking
+- Reducing redundant computations
+- Enabling vectorization
+
+Keep all #include statements, function signatures, and macro usage exactly the same. Only optimize the loop bodies and computations.
 
 {code}
 <|im_end|>
 <|im_start|>assistant
 """
+        else:
+            prompt = f"""<|im_start|>system
+You are a {lang} code optimizer. You ONLY output valid {lang} code. No explanations, no markdown, no comments about changes. Just the raw optimized {lang} code. Preserve all #include statements and function signatures.
+<|im_end|>
+<|im_start|>user
+Optimize this {lang} code for maximum runtime performance. Keep the same function signatures and #include statements:
+
+{code}
+<|im_end|>
+<|im_start|>assistant
+"""
+        logger.info(f"Created prompt for {lang} code with {is_polybench and 'PolyBench' or 'standard'} context")
+        # logger.debug(f"Prompt: {prompt}")
         return prompt
 
     def generate_optimizations(self, num_samples: int) -> tuple:
@@ -138,24 +174,31 @@ Optimize this C++ code for maximum runtime performance:
         prompt = self.create_prompt(self.original_code)
         prompts = [prompt] * num_samples
 
-        # Tokenize
+        # Tokenize - use larger max_length to avoid truncating source code
         inputs = self.tokenizer(
             prompts,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=512
+            max_length=4096  # Increased from 512 to handle full source files
         )
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # Move inputs to the same device as the model's first layer
+        first_device = next(self.model.parameters()).device
+        inputs = {k: v.to(first_device) for k, v in inputs.items()}
+
+        # Log input length to help debug truncation issues
+        input_len = inputs['input_ids'].shape[1]
+        logger.info(f"Prompt tokenized to {input_len} tokens")
 
         # Generate with log probabilities
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=2048,  # Increased from 512 to allow full code generation
                 do_sample=True,
-                top_p=0.95,
-                temperature=0.7,
+                top_p=0.9,
+                top_k=50,
+                temperature=0.8,
                 pad_token_id=self.tokenizer.pad_token_id,
                 return_dict_in_generate=True,
                 output_scores=True,
