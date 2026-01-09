@@ -15,11 +15,8 @@ import os
 from pathlib import Path
 
 from src.simple_trainer import SimpleCodeOptimizationTrainer
+from src.datasets import create_dataset, SingleProgramDataset
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -35,11 +32,33 @@ def parse_args():
         required=True,
         help="HuggingFace model name (e.g., 'Salesforce/codegen-350M-mono')"
     )
+
+    # Dataset or single program mode
     parser.add_argument(
         "--program",
         type=str,
-        default="programs/bubble_sort.cpp",
-        help="Path to the C++ program to optimize (default: programs/bubble_sort.cpp)"
+        default=None,
+        help="Path to a single C++ program to optimize (use this OR --dataset)"
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        choices=['polybench', 'directory'],
+        help="Dataset type to use: 'polybench' or 'directory' (use this OR --program)"
+    )
+    parser.add_argument(
+        "--dataset-path",
+        type=str,
+        default=None,
+        help="Path to dataset (required if --dataset is specified)"
+    )
+    parser.add_argument(
+        "--dataset-sampling",
+        type=str,
+        default="random",
+        choices=['random', 'sequential'],
+        help="How to sample programs from dataset: 'random' or 'sequential' (default: random)"
     )
 
     # Training arguments
@@ -94,12 +113,37 @@ def parse_args():
         default=10,
         help="Save checkpoint every N steps (default: 10)"
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose DEBUG logging to see generated code and compilation details"
+    )
 
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+
+    # Setup logging based on verbosity
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Validate arguments
+    if args.program is None and args.dataset is None:
+        logger.error("Must specify either --program or --dataset")
+        return 1
+
+    if args.program is not None and args.dataset is not None:
+        logger.error("Cannot specify both --program and --dataset")
+        return 1
+
+    if args.dataset is not None and args.dataset_path is None:
+        logger.error("Must specify --dataset-path when using --dataset")
+        return 1
 
     # Set GPU devices before any CUDA initialization
     if args.gpus is not None:
@@ -110,24 +154,43 @@ def main():
     logger.info("Simple RL-Based Code Optimization Training (REINFORCE)")
     logger.info("=" * 80)
     logger.info(f"Model: {args.model}")
-    logger.info(f"Program: {args.program}")
+
+    # Initialize dataset
+    dataset = None
+    if args.dataset is not None:
+        logger.info(f"Dataset: {args.dataset}")
+        logger.info(f"Dataset path: {args.dataset_path}")
+        logger.info(f"Sampling strategy: {args.dataset_sampling}")
+        try:
+            if args.dataset == 'polybench':
+                dataset = create_dataset('polybench', polybench_dir=args.dataset_path)
+            elif args.dataset == 'directory':
+                dataset = create_dataset('directory', directory=args.dataset_path)
+        except Exception as e:
+            logger.error(f"Failed to load dataset: {e}")
+            return 1
+    else:
+        logger.info(f"Program: {args.program}")
+        # Single program mode - verify it exists
+        program_path = Path(args.program)
+        if not program_path.exists():
+            logger.error(f"Program not found: {args.program}")
+            return 1
+        # Wrap single program as a dataset for consistency
+        dataset = SingleProgramDataset(args.program)
+
     logger.info(f"Training steps: {args.steps}")
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Learning rate: {args.learning_rate}")
     logger.info(f"Output directory: {args.output_dir}")
     logger.info("=" * 80)
 
-    # Verify program exists
-    program_path = Path(args.program)
-    if not program_path.exists():
-        logger.error(f"Program not found: {args.program}")
-        return 1
-
     # Initialize trainer
     try:
         trainer = SimpleCodeOptimizationTrainer(
             model_name=args.model,
-            program_path=str(program_path),
+            dataset=dataset,
+            sampling_strategy=args.dataset_sampling,
             output_dir=args.output_dir,
             learning_rate=args.learning_rate,
             batch_size=args.batch_size,

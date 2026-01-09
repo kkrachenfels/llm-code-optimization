@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .compiler import CppCompiler
 from .reward import AdaptiveRewardFunction
+from .datasets import CodeDataset
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,7 +18,8 @@ class SimpleCodeOptimizationTrainer:
     def __init__(
         self,
         model_name: str,
-        program_path: str,
+        dataset: CodeDataset,
+        sampling_strategy: str = "random",
         output_dir: str = "checkpoints",
         learning_rate: float = 1e-5,
         batch_size: int = 4,
@@ -29,35 +31,30 @@ class SimpleCodeOptimizationTrainer:
 
         Args:
             model_name: HuggingFace model name
-            program_path: Path to the original C++ program
+            dataset: CodeDataset containing programs to optimize
+            sampling_strategy: How to sample programs ('random' or 'sequential')
             output_dir: Directory to save checkpoints
             learning_rate: Learning rate
             batch_size: Batch size for training
             max_length: Maximum sequence length
             use_8bit: Whether to use 8-bit quantization
         """
-        self.program_path = Path(program_path)
+        self.dataset = dataset
+        self.sampling_strategy = sampling_strategy
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.batch_size = batch_size
         self.max_length = max_length
 
-        # Load original program
-        with open(self.program_path, 'r') as f:
-            self.original_code = f.read()
+        # Current program state (will be updated each step in dataset mode)
+        self.current_program = None
+        self.original_code = None
+        self.baseline_runtime = None
+        self.reward_function = None
+        self.compiler = None  # Will be created per program with appropriate config
 
-        # Initialize compiler and get baseline
-        self.compiler = CppCompiler()
-        logger.info("Computing baseline runtime...")
-        success, self.baseline_runtime, error = self.compiler.compile_and_run(
-            self.original_code, num_runs=5
-        )
-        if not success:
-            raise RuntimeError(f"Failed to benchmark baseline: {error}")
-        logger.info(f"Baseline runtime: {self.baseline_runtime:.2f} microseconds")
-
-        # Initialize reward function
-        self.reward_function = AdaptiveRewardFunction(self.baseline_runtime)
+        # Load and benchmark the first program
+        self._load_next_program()
 
         # Load model and tokenizer
         logger.info(f"Loading model: {model_name}")
@@ -86,6 +83,37 @@ class SimpleCodeOptimizationTrainer:
 
         # Setup optimizer
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
+
+    def _load_next_program(self):
+        """Load the next program from the dataset and compute its baseline."""
+        # Get next program based on sampling strategy
+        if self.sampling_strategy == "random":
+            self.current_program = self.dataset.get_random_program()
+        else:  # sequential
+            self.current_program = self.dataset.get_next_program()
+
+        self.original_code = self.current_program['code']
+        program_name = self.current_program['name']
+
+        logger.info(f"Loading program: {program_name}")
+
+        # Create compiler with program-specific configuration
+        compiler_config = self.current_program.get('compiler_config', {})
+        self.compiler = CppCompiler(**compiler_config)
+
+        # Compute baseline for this program
+        logger.info("Computing baseline runtime...")
+        success, self.baseline_runtime, error = self.compiler.compile_and_run(
+            self.original_code, num_runs=5
+        )
+        if not success:
+            raise RuntimeError(
+                f"Failed to benchmark baseline for {program_name}: {error}"
+            )
+        logger.info(f"Baseline runtime: {self.baseline_runtime:.2f} microseconds")
+
+        # Create reward function for this program
+        self.reward_function = AdaptiveRewardFunction(self.baseline_runtime)
 
     def create_prompt(self, code: str) -> str:
         """Create optimization prompt for the model."""
@@ -168,16 +196,21 @@ Optimized code:
         """Evaluate generated code and compute rewards."""
         rewards = []
 
-        for response in responses:
+        for idx, response in enumerate(responses):
+            logger.debug(f"--- Evaluating response {idx + 1}/{len(responses)} ---")
+
             # Extract code from response
             code = self.compiler.extract_code_from_llm_output(response)
 
             if code is None:
+                logger.warning(f"Response {idx + 1}: Failed to extract code from LLM output")
                 reward = self.reward_function.compute_reward(
                     False, None, "Failed to extract code"
                 )
                 rewards.append(reward)
                 continue
+
+            logger.debug(f"Response {idx + 1}: Extracted {len(code)} chars of code")
 
             # Compile and run
             success, runtime, error = self.compiler.compile_and_run(code, num_runs=3)
@@ -252,9 +285,14 @@ Optimized code:
     def train(self, num_steps: int = 100, save_every: int = 10):
         """Run training loop."""
         logger.info(f"Starting training for {num_steps} steps...")
+        logger.info(f"Dataset size: {len(self.dataset)} programs")
 
         for step in range(num_steps):
             logger.info(f"\n--- Step {step + 1}/{num_steps} ---")
+
+            # Load new program if dataset has multiple programs
+            if len(self.dataset) > 1:
+                self._load_next_program()
 
             # Track best runtime before step to detect improvement
             best_runtime_before = self.reward_function.best_runtime
@@ -262,7 +300,7 @@ Optimized code:
             metrics = self.train_step()
 
             logger.info(
-                f"Step {step + 1}: "
+                f"Step {step + 1} ({self.current_program['name']}): "
                 f"mean_reward={metrics['mean_reward']:.3f}, "
                 f"loss={metrics['loss']:.3f}, "
                 f"best_speedup={metrics['speedup']:.2f}x"
