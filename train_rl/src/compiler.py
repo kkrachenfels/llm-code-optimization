@@ -139,7 +139,7 @@ class CppCompiler:
 
     def extract_code_from_llm_output(self, text: str) -> Optional[str]:
         """
-        Extract C++ code from LLM output, handling markdown code blocks.
+        Extract C++ code from LLM output, handling both raw code and markdown blocks.
 
         Args:
             text: LLM output text
@@ -147,56 +147,117 @@ class CppCompiler:
         Returns:
             Extracted C++ code or None if not found
         """
-        logger.debug(f"Extracting code from LLM output ({len(text)} chars):\n{text[:500]}...")
+        logger.debug(f"=== EXTRACT CODE START ===")
+        logger.debug(f"Raw LLM output ({len(text)} chars):\n{text}")
+        logger.debug(f"=== END RAW OUTPUT ===")
 
-        # Try to find code blocks with ```cpp or ```c++ (flexible with whitespace)
-        cpp_pattern = r"```(?:cpp|c\+\+|C\+\+|CPP)\s*(.*?)```"
+        original_text = text
+
+        # Clean up the text - remove any trailing special tokens
+        text = re.sub(r'<\|im_end\|>.*', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'<\|endoftext\|>.*', '', text, flags=re.DOTALL).strip()
+
+        if text != original_text:
+            logger.debug(f"After cleanup ({len(text)} chars, removed {len(original_text) - len(text)} chars):\n{text}")
+        else:
+            logger.debug(f"No special tokens removed during cleanup")
+
+        # PRIORITY 1: Check if text starts with raw C/C++ code (no markdown)
+        # This is the expected format from our prompt
+        stripped = text.strip()
+        logger.debug(f"PRIORITY 1: Checking if text starts with raw C/C++ code...")
+        logger.debug(f"First 50 chars: {repr(stripped[:50])}")
+        if stripped.startswith('#include') or stripped.startswith('//') or stripped.startswith('/*'):
+            logger.debug(f"Text starts with C/C++ code marker, extracting raw code...")
+            # Looks like raw code - extract until we hit non-code content
+            lines = stripped.split('\n')
+            code_lines = []
+            for i, line in enumerate(lines):
+                # Stop at markdown or explanation patterns
+                if line.strip().startswith(('**', '##', '```', 'Note:', 'Explanation:', 'Changes:', 'This ')):
+                    logger.debug(f"Stopping at line {i}: {repr(line[:50])}")
+                    break
+                code_lines.append(line)
+            if code_lines:
+                code = '\n'.join(code_lines).strip()
+                # Validate it has some C/C++ content
+                if '#include' in code or 'int ' in code or 'void ' in code or 'double ' in code:
+                    logger.debug(f"SUCCESS: Extracted raw code, {len(code_lines)} lines, {len(code)} chars")
+                    return code
+                else:
+                    logger.debug(f"FAILED: Raw code didn't contain expected C/C++ markers")
+        else:
+            logger.debug(f"Text doesn't start with #include, //, or /* - trying other methods")
+
+        # PRIORITY 2: Try to find code blocks with ```cpp or ```c++
+        logger.debug(f"PRIORITY 2: Looking for ```cpp code blocks...")
+        cpp_pattern = r"```(?:cpp|c\+\+|C\+\+|CPP|c)\s*(.*?)```"
         matches = re.findall(cpp_pattern, text, re.DOTALL | re.IGNORECASE)
         if matches:
-            logger.debug(f"Found code block with cpp marker, extracted {len(matches[0])} chars")
+            logger.debug(f"SUCCESS: Found code block with cpp marker, extracted {len(matches[0])} chars")
             return matches[0].strip()
+        else:
+            logger.debug(f"No ```cpp code blocks found")
 
-        # Try generic code blocks with newline
+        # PRIORITY 3: Try generic code blocks
+        logger.debug(f"PRIORITY 3: Looking for generic ``` code blocks...")
         generic_pattern = r"```\s*\n(.*?)```"
         matches = re.findall(generic_pattern, text, re.DOTALL)
         if matches:
-            # Check if it looks like C++ code
             code = matches[0].strip()
-            if "#include" in code or "int main" in code or "std::" in code:
+            if "#include" in code or "int " in code or "void " in code:
+                logger.debug(f"SUCCESS: Found generic code block, {len(code)} chars")
                 return code
+            else:
+                logger.debug(f"Generic code block found but doesn't look like C/C++")
+        else:
+            logger.debug(f"No generic code blocks found")
 
-        # Try any triple backticks
+        # PRIORITY 4: Try any triple backticks
+        logger.debug(f"PRIORITY 4: Looking for any ``` blocks...")
         any_backticks_pattern = r"```(.*?)```"
         matches = re.findall(any_backticks_pattern, text, re.DOTALL)
+        if matches:
+            logger.debug(f"Found {len(matches)} backtick blocks, checking each...")
         for match in matches:
             code = match.strip()
             # Remove language identifier if present at start
-            if code.startswith(('cpp', 'c++', 'C++', 'CPP')):
+            if code.split('\n')[0].strip().lower() in ('cpp', 'c++', 'c', 'cxx'):
                 code = code.split('\n', 1)[1] if '\n' in code else code
                 code = code.strip()
-            # Check if it looks like C++ code
-            if "#include" in code or "int main" in code or "std::" in code:
+            if "#include" in code or "int " in code or "void " in code:
+                logger.debug(f"SUCCESS: Found code in backticks, {len(code)} chars")
                 return code
+        if matches:
+            logger.debug(f"Backtick blocks found but none contained valid C/C++ code")
 
-        # If no code blocks, check if the entire text looks like C++ code
-        if "#include" in text and "int main" in text:
-            # Try to extract just the C++ part, removing any markdown
+        # PRIORITY 5: Look for #include anywhere and extract from there
+        logger.debug(f"PRIORITY 5: Looking for #include anywhere in text...")
+        if "#include" in text:
             lines = text.split('\n')
             code_lines = []
             in_code = False
+            brace_count = 0
             for line in lines:
                 if '#include' in line and not in_code:
                     in_code = True
                 if in_code:
-                    # Stop at common markdown patterns
-                    if line.strip().startswith(('**', '##', '```', 'Note:', 'Optimized')):
+                    # Stop at markdown patterns
+                    if line.strip().startswith(('**', '##', '```', 'Note:', 'Explanation:')):
                         break
                     code_lines.append(line)
+                    brace_count += line.count('{') - line.count('}')
             if code_lines:
-                logger.debug(f"Extracted code from raw text, {len(code_lines)} lines")
+                logger.debug(f"SUCCESS: Extracted code from #include marker, {len(code_lines)} lines")
                 return '\n'.join(code_lines).strip()
+            else:
+                logger.debug(f"#include found but couldn't extract valid code lines")
+        else:
+            logger.debug(f"No #include found in text")
 
-        logger.warning(f"Failed to extract code from LLM output. Full response:\n{text}")
+        logger.warning(f"=== EXTRACTION FAILED ===")
+        logger.warning(f"All 5 extraction methods failed. Full response:\n{text}")
+        logger.warning(f"=== END FAILED RESPONSE ===")
         return None
 
 

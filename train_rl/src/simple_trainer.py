@@ -8,7 +8,6 @@ from .compiler import CppCompiler
 from .reward import AdaptiveRewardFunction
 from .datasets import CodeDataset
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -117,15 +116,15 @@ class SimpleCodeOptimizationTrainer:
 
     def create_prompt(self, code: str) -> str:
         """Create optimization prompt for the model."""
-        prompt = f"""Optimize the following C++ code for runtime performance. Provide only the complete optimized C++ code without explanations.
+        prompt = f"""<|im_start|>system
+You are a C++ code optimizer. You ONLY output valid C++ code. No explanations, no markdown, no comments about changes. Just the raw C++ code.
+<|im_end|>
+<|im_start|>user
+Optimize this C++ code for maximum runtime performance:
 
-Original code:
-```cpp
 {code}
-```
-
-Optimized code:
-```cpp
+<|im_end|>
+<|im_start|>assistant
 """
         return prompt
 

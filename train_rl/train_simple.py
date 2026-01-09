@@ -12,12 +12,35 @@ Example:
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 
-from src.simple_trainer import SimpleCodeOptimizationTrainer
-from src.datasets import create_dataset, SingleProgramDataset
+
+def setup_logging(verbose: bool = False):
+    """Configure logging for all modules."""
+    log_level = logging.DEBUG if verbose else logging.INFO
+
+    # Configure the root logger
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True  # Override any existing configuration
+    )
+
+    # Explicitly set level for our modules
+    for module_name in ['src.compiler', 'src.simple_trainer', 'src.reward', 'src.datasets', '__main__']:
+        logging.getLogger(module_name).setLevel(log_level)
+
+    # Reduce noise from other libraries
+    logging.getLogger('transformers').setLevel(logging.WARNING)
+    logging.getLogger('torch').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 
 logger = logging.getLogger(__name__)
+
+# Note: src.* imports are done inside main() after logging is configured
+# This ensures --verbose flag affects all debug logging
 
 
 def parse_args():
@@ -125,12 +148,12 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Setup logging based on verbosity
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    # Setup logging based on verbosity - must be done before any logging calls
+    setup_logging(verbose=args.verbose)
+
+    # Now import src modules (after logging is configured)
+    from src.simple_trainer import SimpleCodeOptimizationTrainer
+    from src.datasets import create_dataset, SingleProgramDataset
 
     # Validate arguments
     if args.program is None and args.dataset is None:
