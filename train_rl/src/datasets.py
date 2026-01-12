@@ -197,6 +197,200 @@ class DirectoryDataset(CodeDataset):
         logger.info(f"Loaded {len(self.programs)} programs from {self.directory}")
 
 
+class SVCompDataset(CodeDataset):
+    """Dataset loader for SV-COMP benchmarks (simple C verification programs)."""
+
+    # Stub implementations for __VERIFIER_* functions and timing wrapper
+    VERIFIER_STUBS = '''
+#define _POSIX_C_SOURCE 199309L
+#include <stdlib.h>
+#include <time.h>
+#include <stdio.h>
+
+// Verifier stubs - provide deterministic values for training
+int __VERIFIER_nondet_int(void) { return 42; }
+unsigned int __VERIFIER_nondet_uint(void) { return 42u; }
+long __VERIFIER_nondet_long(void) { return 42L; }
+unsigned long __VERIFIER_nondet_ulong(void) { return 42UL; }
+short __VERIFIER_nondet_short(void) { return 42; }
+unsigned short __VERIFIER_nondet_ushort(void) { return 42; }
+char __VERIFIER_nondet_char(void) { return 'A'; }
+unsigned char __VERIFIER_nondet_uchar(void) { return 65; }
+_Bool __VERIFIER_nondet_bool(void) { return 1; }
+float __VERIFIER_nondet_float(void) { return 1.0f; }
+double __VERIFIER_nondet_double(void) { return 1.0; }
+void *__VERIFIER_nondet_pointer(void) { return NULL; }
+
+void __VERIFIER_assume(int cond) { if (!cond) exit(0); }
+void __VERIFIER_error(void) { exit(1); }
+void __VERIFIER_assert(int cond) { if (!cond) exit(1); }
+
+// Stub for reach_error (used in many SV-COMP programs)
+void reach_error(void) { exit(1); }
+
+// Stub for assume_abort_if_not
+void assume_abort_if_not(int cond) { if (!cond) exit(0); }
+'''
+
+    TIMING_WRAPPER_START = '''
+// Timing wrapper
+static struct timespec __start_time, __end_time;
+static void __attribute__((constructor)) __start_timer(void) {
+    clock_gettime(CLOCK_MONOTONIC, &__start_time);
+}
+static void __attribute__((destructor)) __end_timer(void) {
+    clock_gettime(CLOCK_MONOTONIC, &__end_time);
+    double elapsed = (__end_time.tv_sec - __start_time.tv_sec) * 1e6 +
+                     (__end_time.tv_nsec - __start_time.tv_nsec) / 1e3;
+    printf("%f\\n", elapsed);
+}
+'''
+
+    def __init__(
+        self,
+        svcomp_dir: str,
+        categories: Optional[List[str]] = None,
+        seed: Optional[int] = None
+    ):
+        """
+        Initialize SV-COMP dataset.
+
+        Args:
+            svcomp_dir: Path to sv-benchmarks/c directory
+            categories: List of category subdirectories to load (default: simple ones)
+            seed: Random seed for reproducibility
+        """
+        super().__init__(seed)
+        self.svcomp_dir = Path(svcomp_dir)
+
+        # Default to simpler categories if not specified
+        self.categories = categories or [
+            'loop-simple',
+            'recursive-simple',
+            'loops',
+            'nla-digbench',
+        ]
+        self._load_programs()
+
+    def _preprocess_code(self, code: str) -> str:
+        """
+        Preprocess SV-COMP code to make it compilable and runnable.
+
+        - Remove existing extern declarations for __VERIFIER_* functions
+        - Add our stubs and timing wrapper
+        """
+        lines = code.split('\n')
+        filtered_lines = []
+        skip_patterns = [
+            'extern void __assert_fail',
+            'extern int __VERIFIER_nondet',
+            'extern unsigned int __VERIFIER_nondet',
+            'extern long __VERIFIER_nondet',
+            'extern unsigned long __VERIFIER_nondet',
+            'extern short __VERIFIER_nondet',
+            'extern char __VERIFIER_nondet',
+            'extern _Bool __VERIFIER_nondet',
+            'extern float __VERIFIER_nondet',
+            'extern double __VERIFIER_nondet',
+            'extern void *__VERIFIER_nondet',
+            'extern void abort',
+            'extern void reach_error',
+            'extern void __VERIFIER_error',
+            'extern void __VERIFIER_assume',
+            'void reach_error()',
+            'void assume_abort_if_not(',
+            'void __VERIFIER_assert(',
+            '#include <assert.h>',
+        ]
+
+        in_reach_error_def = False
+        in_assume_abort_def = False
+        in_verifier_assert_def = False
+        brace_count = 0
+
+        for line in lines:
+            # Skip extern declarations we're replacing
+            skip = False
+            for pattern in skip_patterns:
+                if pattern in line:
+                    # Check if this is a function definition we need to skip entirely
+                    if 'void reach_error()' in line or 'void assume_abort_if_not(' in line or 'void __VERIFIER_assert(' in line:
+                        if '{' in line:
+                            brace_count = line.count('{') - line.count('}')
+                            if brace_count > 0:
+                                if 'reach_error' in line:
+                                    in_reach_error_def = True
+                                elif 'assume_abort_if_not' in line:
+                                    in_assume_abort_def = True
+                                elif '__VERIFIER_assert' in line:
+                                    in_verifier_assert_def = True
+                    skip = True
+                    break
+
+            # Skip function body if we're inside a function definition to skip
+            if in_reach_error_def or in_assume_abort_def or in_verifier_assert_def:
+                brace_count += line.count('{') - line.count('}')
+                if brace_count <= 0:
+                    in_reach_error_def = False
+                    in_assume_abort_def = False
+                    in_verifier_assert_def = False
+                continue
+
+            if not skip:
+                filtered_lines.append(line)
+
+        # Combine with stubs and timing
+        processed_code = self.VERIFIER_STUBS + self.TIMING_WRAPPER_START + '\n' + '\n'.join(filtered_lines)
+        return processed_code
+
+    def _load_programs(self):
+        """Load all SV-COMP programs from selected categories."""
+        if not self.svcomp_dir.exists():
+            raise FileNotFoundError(
+                f"SV-COMP directory not found: {self.svcomp_dir}\n"
+                f"Please clone: git clone https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks.git"
+            )
+
+        for category in self.categories:
+            category_path = self.svcomp_dir / category
+            if not category_path.exists():
+                logger.warning(f"Category not found: {category_path}")
+                continue
+
+            # Load all .c files in the category
+            for c_file in category_path.glob('*.c'):
+                try:
+                    with open(c_file, 'r') as f:
+                        raw_code = f.read()
+
+                    # Preprocess to add stubs and timing
+                    processed_code = self._preprocess_code(raw_code)
+
+                    # Use gcc for C files with appropriate flags
+                    compiler_config = {
+                        'compiler': 'gcc',
+                        'flags': ['-O2', '-std=c11', '-lm', '-lrt'],
+                    }
+
+                    self.programs.append({
+                        'code': processed_code,
+                        'name': c_file.stem,
+                        'path': str(c_file),
+                        'category': category,
+                        'compiler_config': compiler_config,
+                        'raw_code': raw_code,  # Keep original for reference
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to load {c_file}: {e}")
+
+        if not self.programs:
+            raise ValueError(
+                f"No programs found in {self.svcomp_dir} for categories: {self.categories}"
+            )
+
+        logger.info(f"Loaded {len(self.programs)} programs from SV-COMP ({', '.join(self.categories)})")
+
+
 class SingleProgramDataset(CodeDataset):
     """Wrapper to use a single program as a dataset (for backwards compatibility)."""
 
@@ -232,7 +426,7 @@ def create_dataset(dataset_type: str, **kwargs) -> CodeDataset:
     Factory function to create datasets.
 
     Args:
-        dataset_type: Type of dataset ('polybench', 'directory', 'single')
+        dataset_type: Type of dataset ('polybench', 'directory', 'svcomp', 'single')
         **kwargs: Arguments passed to dataset constructor
 
     Returns:
@@ -242,6 +436,8 @@ def create_dataset(dataset_type: str, **kwargs) -> CodeDataset:
         return PolybenchDataset(**kwargs)
     elif dataset_type == 'directory':
         return DirectoryDataset(**kwargs)
+    elif dataset_type == 'svcomp':
+        return SVCompDataset(**kwargs)
     elif dataset_type == 'single':
         return SingleProgramDataset(**kwargs)
     else:

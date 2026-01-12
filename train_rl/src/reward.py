@@ -56,18 +56,10 @@ class RewardFunction:
         # Compute speedup
         speedup = self.baseline_runtime / runtime
 
-        # Reward formula: log-based to handle large speedups
-        # Positive reward for speedup > 1, negative for slowdown
-        if speedup > 1.0:
-            # Improvement: logarithmic reward to avoid extreme values
-            reward = self.speedup_weight * np.log(speedup)
-            reward += self.correctness_bonus
-        elif speedup >= 0.95:
-            # Similar performance (within 5%): small positive reward
-            reward = 0.1 + self.correctness_bonus
-        else:
-            # Slowdown: negative reward
-            reward = self.speedup_weight * (speedup - 1.0)
+        # Reward formula: log-based for smooth gradient
+        # log(speedup) is positive for speedup > 1, negative for slowdown
+        # This provides a continuous reward signal without discontinuities
+        reward = self.speedup_weight * np.log(speedup) + self.correctness_bonus
 
         return reward
 

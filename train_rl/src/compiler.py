@@ -22,7 +22,8 @@ class CppCompiler:
         include_paths: Optional[list] = None,
         additional_sources: Optional[list] = None,
         defines: Optional[dict] = None,
-        output_is_seconds: bool = False
+        output_is_seconds: bool = False,
+        source_extension: Optional[str] = None
     ):
         """
         Initialize the C++ compiler.
@@ -34,6 +35,7 @@ class CppCompiler:
             additional_sources: List of additional source files to compile
             defines: Dictionary of preprocessor defines (for -D flags)
             output_is_seconds: If True, expect output in seconds and convert to microseconds
+            source_extension: File extension for source files (default: '.cpp' for g++, '.c' for gcc)
         """
         self.compiler = compiler
         self.flags = flags or ["-O2", "-std=c++17"]
@@ -41,6 +43,11 @@ class CppCompiler:
         self.additional_sources = additional_sources or []
         self.defines = defines or {}
         self.output_is_seconds = output_is_seconds
+        # Auto-detect extension based on compiler if not specified
+        if source_extension is None:
+            self.source_extension = '.c' if compiler in ('gcc', 'cc', 'clang') else '.cpp'
+        else:
+            self.source_extension = source_extension
 
     def compile_and_run(self, code: str, timeout: int = 30, num_runs: int = 3) -> Tuple[bool, Optional[float], str]:
         """
@@ -58,7 +65,7 @@ class CppCompiler:
         self.LOCAL_TMP_DIR.mkdir(exist_ok=True)
 
         with tempfile.TemporaryDirectory(dir=self.LOCAL_TMP_DIR) as tmpdir:
-            source_path = os.path.join(tmpdir, "program.cpp")
+            source_path = os.path.join(tmpdir, f"program{self.source_extension}")
             binary_path = os.path.join(tmpdir, "program")
 
             # Write source code

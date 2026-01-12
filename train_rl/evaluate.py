@@ -26,16 +26,49 @@ logger = logging.getLogger(__name__)
 
 
 def create_prompt(code: str) -> str:
-    """Create optimization prompt."""
-    prompt = f"""Optimize the following C++ code for runtime performance. Provide only the complete optimized C++ code without explanations.
+    """Create optimization prompt matching the training format."""
+    # Detect if this is C or C++ code
+    is_cpp = 'iostream' in code or 'std::' in code or 'class ' in code or 'namespace' in code
+    lang = "C++" if is_cpp else "C"
 
-Original code:
-```cpp
+    # Detect if this is polybench code
+    is_polybench = 'polybench.h' in code or 'POLYBENCH_' in code
+
+    if is_polybench:
+        prompt = f"""<|im_start|>system
+You are a C code optimizer specializing in high-performance computing. You ONLY output valid C code. No explanations, no markdown. Just the raw optimized C code.
+<|im_end|>
+<|im_start|>user
+Optimize this PolyBench/C code for maximum runtime performance.
+
+Context about PolyBench macros (do not modify these, just use them):
+- DATA_TYPE is typically double
+- POLYBENCH_2D(arr,N,M,n,m) declares a 2D array
+- POLYBENCH_1D(arr,N,n) declares a 1D array
+- Array indices use standard C syntax: arr[i][j]
+
+Focus on optimizing:
+- Loop ordering for cache efficiency
+- Loop tiling/blocking
+- Reducing redundant computations
+- Enabling vectorization
+
+Keep all #include statements, function signatures, and macro usage exactly the same. Only optimize the loop bodies and computations.
+
 {code}
-```
+<|im_end|>
+<|im_start|>assistant
+"""
+    else:
+        prompt = f"""<|im_start|>system
+You are a {lang} code optimizer. You ONLY output valid {lang} code. No explanations, no markdown, no comments about changes. Just the raw optimized {lang} code. Preserve all #include statements and function signatures.
+<|im_end|>
+<|im_start|>user
+Optimize this {lang} code for maximum runtime performance. Keep the same function signatures and #include statements:
 
-Optimized code:
-```cpp
+{code}
+<|im_end|>
+<|im_start|>assistant
 """
     return prompt
 
@@ -44,8 +77,10 @@ def generate_optimizations(model, tokenizer, prompt: str, num_samples: int = 5):
     """Generate multiple optimization attempts."""
     logger.info(f"Generating {num_samples} optimization candidates...")
 
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+    logger.info(f"Prompt tokenized to {inputs['input_ids'].shape[1]} tokens")
 
     results = []
     for i in range(num_samples):
@@ -53,7 +88,7 @@ def generate_optimizations(model, tokenizer, prompt: str, num_samples: int = 5):
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=2048,
                 do_sample=True,
                 top_p=0.95,
                 temperature=0.7,
@@ -74,6 +109,8 @@ def main():
     parser.add_argument("--num-samples", type=int, default=5, help="Number of optimization attempts")
     parser.add_argument("--num-runs", type=int, default=5, help="Number of runs for benchmarking")
     parser.add_argument("--output", type=str, help="Save best optimized code to file")
+    parser.add_argument("--dataset", type=str, choices=['polybench'], help="Dataset type (for compiler config)")
+    parser.add_argument("--dataset-path", type=str, help="Path to dataset (required if --dataset is specified)")
     args = parser.parse_args()
 
     logger.info("=" * 80)
@@ -89,9 +126,28 @@ def main():
     with open(program_path, 'r') as f:
         original_code = f.read()
 
+    # Setup compiler with appropriate config
+    if args.dataset == 'polybench':
+        if not args.dataset_path:
+            logger.error("--dataset-path required when using --dataset polybench")
+            return 1
+        dataset_path = Path(args.dataset_path)
+        utilities_dir = dataset_path / "utilities"
+        polybench_c = utilities_dir / "polybench.c"
+        compiler = CppCompiler(
+            compiler="gcc",
+            flags=["-O2", "-std=c99"],
+            include_paths=[str(utilities_dir), str(program_path.parent)],
+            additional_sources=[str(polybench_c)],
+            defines={'POLYBENCH_TIME': None},
+            output_is_seconds=True
+        )
+        logger.info("Using PolyBench compiler configuration")
+    else:
+        compiler = CppCompiler()
+
     # Get baseline
     logger.info("Computing baseline runtime...")
-    compiler = CppCompiler()
     baseline_runtime = get_baseline_runtime(str(program_path), compiler, num_runs=args.num_runs)
     logger.info(f"Baseline: {baseline_runtime:.2f} μs")
 

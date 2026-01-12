@@ -214,23 +214,9 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
             response = self.tokenizer.decode(response_tokens, skip_special_tokens=True)
             responses.append(response)
 
-        # Compute log probabilities for generated tokens
-        log_probs_list = []
-        for i, seq in enumerate(generated_sequences):
-            response_tokens = seq[inputs['input_ids'].shape[1]:]
-            log_prob = 0.0
-
-            # Simple approximation: compute probability of the sequence
-            with torch.no_grad():
-                full_output = self.model(seq.unsqueeze(0))
-                logits = full_output.logits[0, inputs['input_ids'].shape[1]-1:-1, :]
-                log_probs = torch.log_softmax(logits, dim=-1)
-
-                for j, token in enumerate(response_tokens):
-                    if j < log_probs.shape[0]:
-                        log_prob += log_probs[j, token].item()
-
-            log_probs_list.append(log_prob)
+        # Skip log_probs computation during generation - we'll compute with gradients in train_step
+        # This avoids potential indexing issues and saves memory
+        log_probs_list = [0.0] * len(responses)
 
         return prompts, responses, log_probs_list
 
