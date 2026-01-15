@@ -109,10 +109,10 @@ class CppCompiler:
                 )
 
                 if result.returncode != 0:
-                    logger.warning(f"Compilation failed with return code {result.returncode}")
-                    logger.warning(f"Compiler stderr:\n{result.stderr}")
+                    logger.debug(f"Compilation failed with return code {result.returncode}")
+                    logger.debug(f"Compiler stderr:\n{result.stderr}")
                     logger.debug(f"Failed source code:\n{code[:1000]}...")
-                    return False, None, f"Compilation failed: {result.stderr}"
+                    return False, None, "Compilation failed"
             except subprocess.TimeoutExpired:
                 return False, None, "Compilation timeout"
             except Exception as e:
@@ -268,9 +268,9 @@ class CppCompiler:
         else:
             logger.debug(f"No #include found in text")
 
-        logger.warning(f"=== EXTRACTION FAILED ===")
-        logger.warning(f"All 5 extraction methods failed. Full response:\n{text}")
-        logger.warning(f"=== END FAILED RESPONSE ===")
+        logger.debug(f"=== EXTRACTION FAILED ===")
+        logger.debug(f"All 5 extraction methods failed. Full response:\n{text}")
+        logger.debug(f"=== END FAILED RESPONSE ===")
         return None
 
 

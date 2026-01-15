@@ -83,13 +83,31 @@ def parse_args():
         choices=['random', 'sequential'],
         help="How to sample programs from dataset: 'random' or 'sequential' (default: random)"
     )
+    parser.add_argument(
+        "--train-programs",
+        type=int,
+        default=None,
+        help="Number of programs per epoch for training. If not set, uses all programs (no train/test split)"
+    )
+    parser.add_argument(
+        "--test-programs",
+        type=int,
+        default=None,
+        help="Number of programs to hold out for testing. Required if --train-programs is set"
+    )
 
     # Training arguments
     parser.add_argument(
         "--steps",
         type=int,
-        default=50,
-        help="Number of training steps (default: 50)"
+        default=None,
+        help="Number of training steps. Use this OR --epochs"
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Number of training epochs. Requires --train-programs and --test-programs"
     )
     parser.add_argument(
         "--batch-size",
@@ -168,6 +186,20 @@ def main():
         logger.error("Must specify --dataset-path when using --dataset")
         return 1
 
+    # Validate steps vs epochs arguments
+    if args.steps is None and args.epochs is None:
+        args.steps = 50  # Default to old behavior
+    if args.steps is not None and args.epochs is not None:
+        logger.error("Cannot specify both --steps and --epochs")
+        return 1
+    if args.epochs is not None:
+        if args.train_programs is None or args.test_programs is None:
+            logger.error("Must specify both --train-programs and --test-programs when using --epochs")
+            return 1
+    if (args.train_programs is not None or args.test_programs is not None) and args.epochs is None:
+        logger.error("Must specify --epochs when using --train-programs or --test-programs")
+        return 1
+
     # Set GPU devices before any CUDA initialization
     if args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
@@ -204,7 +236,12 @@ def main():
         # Wrap single program as a dataset for consistency
         dataset = SingleProgramDataset(args.program)
 
-    logger.info(f"Training steps: {args.steps}")
+    if args.epochs is not None:
+        logger.info(f"Training epochs: {args.epochs}")
+        logger.info(f"Train programs per epoch: {args.train_programs}")
+        logger.info(f"Test programs: {args.test_programs}")
+    else:
+        logger.info(f"Training steps: {args.steps}")
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Learning rate: {args.learning_rate}")
     logger.info(f"Output directory: {args.output_dir}")
@@ -221,6 +258,8 @@ def main():
             batch_size=args.batch_size,
             max_length=args.max_length,
             use_8bit=args.use_8bit,
+            train_programs=args.train_programs,
+            test_programs=args.test_programs,
         )
     except Exception as e:
         logger.error(f"Failed to initialize trainer: {e}")
@@ -230,7 +269,10 @@ def main():
 
     # Train
     try:
-        trainer.train(num_steps=args.steps, save_every=args.save_every)
+        if args.epochs is not None:
+            trainer.train_epochs(num_epochs=args.epochs, save_every=args.save_every)
+        else:
+            trainer.train(num_steps=args.steps, save_every=args.save_every)
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
         # Save final checkpoint
