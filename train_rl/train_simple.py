@@ -108,8 +108,8 @@ def parse_args():
     parser.add_argument(
         "--max-length",
         type=int,
-        default=1024,
-        help="Maximum sequence length (default: 1024)"
+        default=6144,
+        help="Maximum sequence length for prompt+response (default: 6144)"
     )
     parser.add_argument(
         "--use-8bit",

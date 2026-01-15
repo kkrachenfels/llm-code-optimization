@@ -22,7 +22,7 @@ class SimpleCodeOptimizationTrainer:
         output_dir: str = "checkpoints",
         learning_rate: float = 1e-5,
         batch_size: int = 4,
-        max_length: int = 1024,
+        max_length: int = 6144,
         use_8bit: bool = False,
     ):
         """
@@ -174,13 +174,13 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         prompt = self.create_prompt(self.original_code)
         prompts = [prompt] * num_samples
 
-        # Tokenize - use larger max_length to avoid truncating source code
+        # Tokenize prompts
         inputs = self.tokenizer(
             prompts,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=4096  # Increased from 512 to handle full source files
+            max_length=self.max_length,
         )
         # Move inputs to the same device as the model's first layer
         first_device = next(self.model.parameters()).device
@@ -279,16 +279,31 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
 
         total_loss = 0.0
         for i, (prompt, response) in enumerate(zip(prompts, responses)):
-            # Tokenize prompt + response
+            # Tokenize prompt separately to get its length
+            prompt_tokens = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
+            prompt_length = prompt_tokens['input_ids'].shape[1]
+
+            # Tokenize full text (prompt + response)
             full_text = prompt + response
             inputs = self.tokenizer(full_text, return_tensors="pt", truncation=True, max_length=self.max_length)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            # Forward pass
-            outputs = self.model(**inputs, labels=inputs['input_ids'])
+            # Create labels with prompt tokens masked out (-100 is ignored by CrossEntropyLoss)
+            labels = inputs['input_ids'].clone()
+            labels[:, :prompt_length] = -100
+
+            # Forward pass - loss is only computed on response tokens now
+            outputs = self.model(**inputs, labels=labels)
+
+            # Count response tokens for scaling mean -> sum
+            num_response_tokens = (labels != -100).sum().item()
+            if num_response_tokens == 0:
+                logger.warning(f"Sample {i}: No response tokens after truncation, skipping")
+                continue
 
             # REINFORCE loss: -log_prob * (reward - baseline)
-            loss = -outputs.loss * normalized_rewards[i]
+            # Multiply by num_response_tokens to convert mean to sum of log probs
+            loss = -outputs.loss * num_response_tokens * normalized_rewards[i]
             total_loss += loss.item()
 
             # Backward pass (accumulate gradients)
