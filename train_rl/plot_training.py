@@ -70,7 +70,7 @@ def parse_log_file(log_path: str) -> dict:
     return metrics
 
 
-def plot_metrics(metrics: dict, output_dir: str = None):
+def plot_metrics(metrics: dict, output_dir: str = None, log_file: str = None):
     """Create plots from parsed metrics."""
     if not metrics['steps']:
         print("No training data found in log file!")
@@ -78,6 +78,12 @@ def plot_metrics(metrics: dict, output_dir: str = None):
 
     output_path = Path(output_dir) if output_dir else Path('.')
     output_path.mkdir(exist_ok=True, parents=True)
+
+    # Use log file prefix for output filename
+    if log_file:
+        prefix = Path(log_file).stem
+    else:
+        prefix = 'training_progress'
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     fig.suptitle('Training Progress', fontsize=14)
@@ -125,7 +131,7 @@ def plot_metrics(metrics: dict, output_dir: str = None):
     plt.tight_layout()
 
     # Save plot
-    plot_path = output_path / 'training_progress.png'
+    plot_path = output_path / f'{prefix}.png'
     plt.savefig(plot_path, dpi=150)
     print(f"Saved plot to: {plot_path}")
 
@@ -167,7 +173,7 @@ def main():
     metrics = parse_log_file(args.log_file)
 
     print(f"Found {len(metrics['steps'])} training steps")
-    plot_metrics(metrics, args.output)
+    plot_metrics(metrics, args.output, args.log_file)
 
 
 if __name__ == '__main__':
