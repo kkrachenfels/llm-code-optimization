@@ -95,6 +95,12 @@ def parse_args():
         default=None,
         help="Number of programs to hold out for testing. Required if --train-programs is set"
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible train/test splits"
+    )
 
     # Training arguments
     parser.add_argument(
@@ -168,6 +174,11 @@ def main():
 
     # Setup logging based on verbosity - must be done before any logging calls
     setup_logging(verbose=args.verbose)
+
+    # Log all parsed arguments
+    logger.info("Parsed arguments:")
+    for arg, value in sorted(vars(args).items()):
+        logger.info(f"  {arg}: {value}")
 
     # Now import src modules (after logging is configured)
     from src.simple_trainer import SimpleCodeOptimizationTrainer
@@ -260,6 +271,7 @@ def main():
             use_8bit=args.use_8bit,
             train_programs=args.train_programs,
             test_programs=args.test_programs,
+            seed=args.seed,
         )
     except Exception as e:
         logger.error(f"Failed to initialize trainer: {e}")

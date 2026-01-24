@@ -23,7 +23,8 @@ class CppCompiler:
         additional_sources: Optional[list] = None,
         defines: Optional[dict] = None,
         output_is_seconds: bool = False,
-        source_extension: Optional[str] = None
+        source_extension: Optional[str] = None,
+        linker_flags: Optional[list] = None
     ):
         """
         Initialize the C++ compiler.
@@ -36,6 +37,7 @@ class CppCompiler:
             defines: Dictionary of preprocessor defines (for -D flags)
             output_is_seconds: If True, expect output in seconds and convert to microseconds
             source_extension: File extension for source files (default: '.cpp' for g++, '.c' for gcc)
+            linker_flags: Flags placed after source files (e.g., ["-lm"])
         """
         self.compiler = compiler
         self.flags = flags or ["-O2", "-std=c++17"]
@@ -43,6 +45,7 @@ class CppCompiler:
         self.additional_sources = additional_sources or []
         self.defines = defines or {}
         self.output_is_seconds = output_is_seconds
+        self.linker_flags = linker_flags or []
         # Auto-detect extension based on compiler if not specified
         if source_extension is None:
             self.source_extension = '.c' if compiler in ('gcc', 'cc', 'clang') else '.cpp'
@@ -95,6 +98,9 @@ class CppCompiler:
 
             # Add output file
             compile_cmd.extend(["-o", binary_path])
+
+            # Add linker flags after sources (order matters for gcc)
+            compile_cmd.extend(self.linker_flags)
 
             # Log the compile command
             logger.debug(f"Compile command: {' '.join(compile_cmd)}")
@@ -149,6 +155,68 @@ class CppCompiler:
 
             avg_runtime = sum(runtimes) / len(runtimes)
             return True, avg_runtime, ""
+
+    def compile_and_get_output(self, code: str, timeout: int = 30) -> Tuple[bool, str, str, str]:
+        """
+        Compile and run code, returning raw stdout/stderr without timing parsing.
+
+        Args:
+            code: Source code as string
+            timeout: Maximum execution time in seconds
+
+        Returns:
+            Tuple of (success, stdout, stderr, error_message)
+        """
+        self.LOCAL_TMP_DIR.mkdir(exist_ok=True)
+
+        with tempfile.TemporaryDirectory(dir=self.LOCAL_TMP_DIR) as tmpdir:
+            source_path = os.path.join(tmpdir, f"program{self.source_extension}")
+            binary_path = os.path.join(tmpdir, "program")
+
+            try:
+                with open(source_path, 'w') as f:
+                    f.write(code)
+            except Exception as e:
+                return False, "", "", f"Failed to write source: {str(e)}"
+
+            # Build compile command
+            compile_cmd = [self.compiler] + self.flags
+            for include_path in self.include_paths:
+                compile_cmd.extend(["-I", include_path])
+            for key, value in self.defines.items():
+                if value is None or value == "":
+                    compile_cmd.append(f"-D{key}")
+                else:
+                    compile_cmd.append(f"-D{key}={value}")
+            compile_cmd.append(source_path)
+            compile_cmd.extend(self.additional_sources)
+            compile_cmd.extend(["-o", binary_path])
+            compile_cmd.extend(self.linker_flags)
+
+            # Compile
+            try:
+                result = subprocess.run(
+                    compile_cmd, capture_output=True, text=True, timeout=timeout
+                )
+                if result.returncode != 0:
+                    return False, "", "", "Compilation failed"
+            except subprocess.TimeoutExpired:
+                return False, "", "", "Compilation timeout"
+            except Exception as e:
+                return False, "", "", f"Compilation error: {str(e)}"
+
+            # Run once
+            try:
+                result = subprocess.run(
+                    [binary_path], capture_output=True, text=True, timeout=timeout
+                )
+                if result.returncode != 0:
+                    return False, result.stdout, result.stderr, f"Runtime error: {result.stderr}"
+                return True, result.stdout, result.stderr, ""
+            except subprocess.TimeoutExpired:
+                return False, "", "", "Execution timeout"
+            except Exception as e:
+                return False, "", "", f"Execution error: {str(e)}"
 
     def extract_code_from_llm_output(self, text: str) -> Optional[str]:
         """

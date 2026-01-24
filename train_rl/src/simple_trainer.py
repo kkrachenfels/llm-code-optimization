@@ -1,4 +1,5 @@
 import random
+import re
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from typing import List, Dict, Optional
@@ -27,6 +28,7 @@ class SimpleCodeOptimizationTrainer:
         use_8bit: bool = False,
         train_programs: Optional[int] = None,
         test_programs: Optional[int] = None,
+        seed: Optional[int] = None,
     ):
         """
         Initialize the trainer.
@@ -42,6 +44,7 @@ class SimpleCodeOptimizationTrainer:
             use_8bit: Whether to use 8-bit quantization
             train_programs: Number of programs per epoch for training (for epoch mode)
             test_programs: Number of programs to hold out for testing (for epoch mode)
+            seed: Random seed for reproducible train/test splits
         """
         self.dataset = dataset
         self.train_programs = train_programs
@@ -55,8 +58,11 @@ class SimpleCodeOptimizationTrainer:
                     f"Dataset has {len(dataset)} programs, but need {total_needed} "
                     f"({train_programs} train + {test_programs} test)"
                 )
-            # Create train/test indices
+            # Create train/test indices with random split
             all_indices = list(range(len(dataset)))
+            if seed is not None:
+                random.seed(seed)
+            random.shuffle(all_indices)
             self.test_indices = all_indices[:test_programs]
             self.train_indices = all_indices[test_programs:]
             logger.info(f"Train/test split: {len(self.train_indices)} train, {len(self.test_indices)} test")
@@ -75,9 +81,23 @@ class SimpleCodeOptimizationTrainer:
         self.baseline_runtime = None
         self.reward_function = None
         self.compiler = None  # Will be created per program with appropriate config
+        self.kernel_info = None  # Set when kernel_markers are configured
+        self.correctness_compiler = None  # Set when correctness_config is configured
+        self.reference_output = None  # Reference output for correctness checking
 
-        # Load and benchmark the first program
-        self._load_next_program()
+        # Track programs that failed to compile to avoid retrying them
+        self._failed_programs: set = set()
+
+        # Load and benchmark the first program (retry if compilation fails)
+        max_retries = len(dataset)
+        for attempt in range(max_retries):
+            try:
+                self._load_next_program()
+                break
+            except RuntimeError as e:
+                logger.warning(f"Initial program load failed (attempt {attempt + 1}): {e}")
+                if attempt == max_retries - 1:
+                    raise RuntimeError("All programs failed to compile during initialization")
 
         # Load model and tokenizer
         logger.info(f"Loading model: {model_name}")
@@ -108,6 +128,87 @@ class SimpleCodeOptimizationTrainer:
         # Setup optimizer
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
 
+    def _extract_kernel_region(self, code: str, markers: tuple) -> Optional[dict]:
+        """
+        Extract the kernel region delimited by markers (e.g. #pragma scop / #pragma endscop).
+
+        Returns a dict with:
+            prefix: everything up to and including the start marker line
+            kernel_body: the code between the markers
+            suffix: everything from the end marker line onward
+            kernel_context: the kernel function signature + variable declarations for prompt context
+
+        Returns None if markers are not found in the code.
+        """
+        start_marker, end_marker = markers
+        lines = code.split('\n')
+
+        start_idx = None
+        end_idx = None
+        for i, line in enumerate(lines):
+            if start_marker in line and start_idx is None:
+                start_idx = i
+            elif end_marker in line and start_idx is not None:
+                end_idx = i
+                break
+
+        if start_idx is None or end_idx is None:
+            return None
+
+        prefix = '\n'.join(lines[:start_idx + 1]) + '\n'
+        kernel_body = '\n'.join(lines[start_idx + 1:end_idx])
+        suffix = '\n'.join(lines[end_idx:])
+
+        # Extract kernel function context: walk backward from start_marker
+        # to find the function signature and variable declarations
+        context_lines = []
+        for i in range(start_idx - 1, -1, -1):
+            line = lines[i]
+            context_lines.insert(0, line)
+            # Stop when we hit the function opening brace or 'static' keyword
+            if line.strip() == '{' or line.strip().startswith('static'):
+                break
+
+        kernel_context = '\n'.join(context_lines)
+
+        return {
+            'prefix': prefix,
+            'kernel_body': kernel_body,
+            'suffix': suffix,
+            'kernel_context': kernel_context,
+        }
+
+    def _outputs_match(self, reference: str, candidate: str, rtol: float = 1e-4) -> bool:
+        """
+        Check if two program outputs match approximately.
+
+        Parses all floating-point numbers from both outputs and compares them
+        with relative tolerance to allow for FP reordering effects.
+        """
+        ref_floats = re.findall(r'-?\d+\.?\d*(?:[eE][+-]?\d+)?', reference)
+        cand_floats = re.findall(r'-?\d+\.?\d*(?:[eE][+-]?\d+)?', candidate)
+
+        if len(ref_floats) != len(cand_floats):
+            logger.debug(f"Output mismatch: {len(ref_floats)} vs {len(cand_floats)} values")
+            return False
+
+        for i, (r, c) in enumerate(zip(ref_floats, cand_floats)):
+            try:
+                rv, cv = float(r), float(c)
+            except ValueError:
+                continue
+            if rv == 0.0 and cv == 0.0:
+                continue
+            if rv == 0.0:
+                if abs(cv) > rtol:
+                    logger.debug(f"Output mismatch at index {i}: ref=0.0, cand={cv}")
+                    return False
+            elif abs(rv - cv) / max(abs(rv), 1e-15) > rtol:
+                logger.debug(f"Output mismatch at index {i}: ref={rv}, cand={cv}")
+                return False
+
+        return True
+
     def _load_next_program(self):
         """Load the next program from the dataset and compute its baseline."""
         # Get next program based on sampling strategy
@@ -123,7 +224,8 @@ class SimpleCodeOptimizationTrainer:
 
         # Create compiler with program-specific configuration
         compiler_config = self.current_program.get('compiler_config', {})
-        self.compiler = CppCompiler(**compiler_config)
+        compiler_kwargs = {k: v for k, v in compiler_config.items() if k not in ('kernel_markers', 'correctness_config')}
+        self.compiler = CppCompiler(**compiler_kwargs)
 
         # Compute baseline for this program
         logger.info("Computing baseline runtime...")
@@ -139,8 +241,61 @@ class SimpleCodeOptimizationTrainer:
         # Create reward function for this program
         self.reward_function = AdaptiveRewardFunction(self.baseline_runtime)
 
+        # Extract kernel region if markers are configured
+        kernel_markers = compiler_config.get('kernel_markers')
+        if kernel_markers:
+            kernel_info = self._extract_kernel_region(self.original_code, kernel_markers)
+            if kernel_info:
+                self.kernel_info = kernel_info
+                logger.info(f"Kernel-only mode: extracted {len(kernel_info['kernel_body'])} chars of kernel code")
+            else:
+                self.kernel_info = None
+                logger.warning(f"Kernel markers configured but not found in {program_name}, using full-file mode")
+        else:
+            self.kernel_info = None
+
+        # Setup correctness checking if configured
+        correctness_config = compiler_config.get('correctness_config')
+        if correctness_config:
+            self.correctness_compiler = CppCompiler(**correctness_config)
+            success, stdout, stderr, error = self.correctness_compiler.compile_and_get_output(self.original_code)
+            if success:
+                self.reference_output = stderr
+                logger.info(f"Correctness check: captured {len(self.reference_output)} chars of reference output")
+            else:
+                self.correctness_compiler = None
+                self.reference_output = None
+                logger.warning(f"Correctness check setup failed for {program_name}: {error}")
+        else:
+            self.correctness_compiler = None
+            self.reference_output = None
+
     def create_prompt(self, code: str) -> str:
         """Create optimization prompt for the model."""
+        # Kernel-only mode: only ask for the optimized kernel body
+        if self.kernel_info is not None:
+            kernel_context = self.kernel_info['kernel_context']
+            kernel_body = self.kernel_info['kernel_body']
+            prompt = f"""<|im_start|>system
+You are a C code optimizer specializing in high-performance loop optimization. You ONLY output valid C loop code. No explanations, no markdown, no function signatures. Just the optimized loop body.
+<|im_end|>
+<|im_start|>user
+Optimize the following loop body for maximum runtime performance.
+
+Function context (do NOT output this, just use it to understand variable types):
+{kernel_context}
+
+Loop body to optimize:
+{kernel_body}
+
+Focus on: loop tiling, loop reordering for cache efficiency, reducing redundant computations, enabling vectorization.
+Output ONLY the optimized loop code. No #pragma lines, no function wrapper, no explanations.
+<|im_end|>
+<|im_start|>assistant
+"""
+            logger.info(f"Created kernel-only prompt ({len(kernel_body)} chars of kernel code)")
+            return prompt
+
         # Detect if this is C or C++ code
         is_cpp = 'iostream' in code or 'std::' in code or 'class ' in code or 'namespace' in code
         lang = "C++" if is_cpp else "C"
@@ -222,7 +377,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
                 do_sample=True,
                 top_p=0.9,
                 top_k=50,
-                temperature=0.8,
+                temperature=1.0,
                 pad_token_id=self.tokenizer.pad_token_id,
                 return_dict_in_generate=True,
                 output_scores=True,
@@ -251,21 +406,53 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         for idx, response in enumerate(responses):
             logger.debug(f"--- Evaluating response {idx + 1}/{len(responses)} ---")
 
-            # Extract code from response
-            code = self.compiler.extract_code_from_llm_output(response)
+            if self.kernel_info is not None:
+                # Kernel-only mode: response is the kernel code directly
+                # Just clean up special tokens and splice back into the full file
+                code = re.sub(r'<\|im_end\|>.*', '', response, flags=re.DOTALL).strip()
+                code = re.sub(r'<\|endoftext\|>.*', '', code, flags=re.DOTALL).strip()
+                # Strip markdown code blocks if the model wrapped output in them
+                code = re.sub(r'^```(?:c|cpp|c\+\+)?\s*\n', '', code)
+                code = re.sub(r'\n```\s*$', '', code)
 
-            if code is None:
-                logger.warning(f"Response {idx + 1}: Failed to extract code from LLM output")
-                reward = self.reward_function.compute_reward(
-                    False, None, "Failed to extract code"
-                )
-                rewards.append(reward)
-                continue
+                if not code.strip():
+                    logger.warning(f"Response {idx + 1}: Empty kernel output")
+                    reward = self.reward_function.compute_reward(
+                        False, None, "Empty kernel output"
+                    )
+                    rewards.append(reward)
+                    continue
 
-            logger.debug(f"Response {idx + 1}: Extracted {len(code)} chars of code")
+                logger.debug(f"Response {idx + 1}: Kernel code {len(code)} chars")
+                code = self.kernel_info['prefix'] + code + '\n' + self.kernel_info['suffix']
+            else:
+                # Full-file mode: extract code from response
+                code = self.compiler.extract_code_from_llm_output(response)
+
+                if code is None:
+                    logger.warning(f"Response {idx + 1}: Failed to extract code from LLM output")
+                    reward = self.reward_function.compute_reward(
+                        False, None, "Failed to extract code"
+                    )
+                    rewards.append(reward)
+                    continue
+
+                logger.debug(f"Response {idx + 1}: Extracted {len(code)} chars of code")
 
             # Compile and run
             success, runtime, error = self.compiler.compile_and_run(code, num_runs=3)
+
+            # Check correctness for successful runs
+            if success and self.correctness_compiler is not None and self.reference_output is not None:
+                ok, _, stderr, cerr = self.correctness_compiler.compile_and_get_output(code)
+                if not ok:
+                    logger.info(f"Correctness check: compilation failed ({cerr}), treating as incorrect")
+                    success = False
+                    error = "Incorrect output (correctness compile failed)"
+                elif not self._outputs_match(self.reference_output, stderr):
+                    logger.info(f"Correctness check: output mismatch, treating as incorrect")
+                    success = False
+                    error = "Incorrect output"
 
             # Compute reward
             reward = self.reward_function.compute_reward(success, runtime, error)
@@ -361,7 +548,18 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
 
             # Load new program if dataset has multiple programs
             if len(self.dataset) > 1:
-                self._load_next_program()
+                # Try to load next program, retrying on compilation failures
+                loaded = False
+                for _ in range(len(self.dataset)):
+                    try:
+                        self._load_next_program()
+                        loaded = True
+                        break
+                    except RuntimeError as e:
+                        logger.warning(f"Program failed to compile, trying next: {e}")
+                if not loaded:
+                    logger.error("All remaining programs failed to compile, stopping training")
+                    break
 
             # Track best runtime before step to detect improvement
             best_runtime_before = self.reward_function.best_runtime
@@ -391,7 +589,11 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         self.tokenizer.save_pretrained(path)
 
     def _load_program_by_index(self, index: int, epoch: Optional[int] = None):
-        """Load a specific program by dataset index and compute its baseline."""
+        """Load a specific program by dataset index and compute its baseline.
+
+        Raises:
+            RuntimeError: If the program fails to compile (also adds to _failed_programs)
+        """
         self.current_program = self.dataset.get_program(index)
         self.original_code = self.current_program['code']
         program_name = self.current_program['name']
@@ -401,7 +603,8 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
 
         # Create compiler with program-specific configuration
         compiler_config = self.current_program.get('compiler_config', {})
-        self.compiler = CppCompiler(**compiler_config)
+        compiler_kwargs = {k: v for k, v in compiler_config.items() if k not in ('kernel_markers', 'correctness_config')}
+        self.compiler = CppCompiler(**compiler_kwargs)
 
         # Compute baseline for this program
         logger.debug(f"{prefix}Computing baseline runtime...")
@@ -409,6 +612,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
             self.original_code, num_runs=5
         )
         if not success:
+            self._failed_programs.add(index)
             raise RuntimeError(
                 f"Failed to benchmark baseline for {program_name}: {error}"
             )
@@ -416,6 +620,35 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
 
         # Create reward function for this program
         self.reward_function = AdaptiveRewardFunction(self.baseline_runtime)
+
+        # Extract kernel region if markers are configured
+        kernel_markers = compiler_config.get('kernel_markers')
+        if kernel_markers:
+            kernel_info = self._extract_kernel_region(self.original_code, kernel_markers)
+            if kernel_info:
+                self.kernel_info = kernel_info
+                logger.info(f"{prefix}Kernel-only mode: extracted {len(kernel_info['kernel_body'])} chars of kernel code")
+            else:
+                self.kernel_info = None
+                logger.warning(f"{prefix}Kernel markers configured but not found in {program_name}, using full-file mode")
+        else:
+            self.kernel_info = None
+
+        # Setup correctness checking if configured
+        correctness_config = compiler_config.get('correctness_config')
+        if correctness_config:
+            self.correctness_compiler = CppCompiler(**correctness_config)
+            success, stdout, stderr, error = self.correctness_compiler.compile_and_get_output(self.original_code)
+            if success:
+                self.reference_output = stderr
+                logger.info(f"{prefix}Correctness check: captured {len(self.reference_output)} chars of reference output")
+            else:
+                self.correctness_compiler = None
+                self.reference_output = None
+                logger.warning(f"{prefix}Correctness check setup failed for {program_name}: {error}")
+        else:
+            self.correctness_compiler = None
+            self.reference_output = None
 
     def evaluate_on_program(self, program_index: int, epoch: Optional[int] = None) -> Dict[str, float]:
         """
@@ -459,15 +692,22 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         program_results = []
 
         for idx in self.test_indices:
-            result = self.evaluate_on_program(idx, epoch=epoch)
-            all_rewards.append(result['mean_reward'])
-            all_speedups.append(result['speedup'])
-            program_results.append(result)
-            logger.info(
-                f"{prefix}Test [{result['program']}]: "
-                f"mean_reward={result['mean_reward']:.3f}, "
-                f"speedup={result['speedup']:.2f}x"
-            )
+            if idx in self._failed_programs:
+                program = self.dataset.get_program(idx)
+                logger.warning(f"{prefix}Skipping previously failed test program: {program['name']}")
+                continue
+            try:
+                result = self.evaluate_on_program(idx, epoch=epoch)
+                all_rewards.append(result['mean_reward'])
+                all_speedups.append(result['speedup'])
+                program_results.append(result)
+                logger.info(
+                    f"{prefix}Test [{result['program']}]: "
+                    f"mean_reward={result['mean_reward']:.3f}, "
+                    f"speedup={result['speedup']:.2f}x"
+                )
+            except RuntimeError as e:
+                logger.warning(f"{prefix}Test program failed to compile, skipping: {e}")
 
         return {
             "test_mean_reward": sum(all_rewards) / len(all_rewards) if all_rewards else 0.0,
@@ -515,8 +755,45 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
             epoch_train_rewards = []
             epoch_train_speedups = []
 
+            # Track which indices we've already used/tried this epoch
+            used_indices = set(epoch_indices)
+
             for step, prog_idx in enumerate(epoch_indices):
-                self._load_program_by_index(prog_idx, epoch=epoch + 1)
+                # Try to load the program, finding a replacement if it fails to compile
+                current_idx = prog_idx
+                while True:
+                    if current_idx in self._failed_programs:
+                        # Already know this one fails, skip it
+                        logger.warning(
+                            f"[Epoch {epoch + 1}] Skipping previously failed program index {current_idx}"
+                        )
+                    else:
+                        try:
+                            self._load_program_by_index(current_idx, epoch=epoch + 1)
+                            break  # Success, continue with training
+                        except RuntimeError as e:
+                            logger.warning(
+                                f"[Epoch {epoch + 1}] Program failed to compile, will try replacement: {e}"
+                            )
+
+                    # Find a replacement program from the training set
+                    available = [
+                        idx for idx in self.train_indices
+                        if idx not in used_indices and idx not in self._failed_programs
+                    ]
+                    if not available:
+                        logger.warning(
+                            f"[Epoch {epoch + 1}] No more replacement programs available, skipping this step"
+                        )
+                        current_idx = None
+                        break
+                    current_idx = available[0]
+                    used_indices.add(current_idx)
+                    logger.info(f"[Epoch {epoch + 1}] Trying replacement program index {current_idx}")
+
+                if current_idx is None:
+                    continue  # Skip this training step
+
                 metrics = self.train_step(epoch=epoch + 1)
 
                 epoch_train_rewards.append(metrics['mean_reward'])
@@ -530,12 +807,21 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
                 )
 
             # Compute epoch training metrics
-            train_metrics = {
-                "train_mean_reward": sum(epoch_train_rewards) / len(epoch_train_rewards),
-                "train_max_reward": max(epoch_train_rewards),
-                "train_mean_speedup": sum(epoch_train_speedups) / len(epoch_train_speedups),
-                "train_max_speedup": max(epoch_train_speedups),
-            }
+            if epoch_train_rewards:
+                train_metrics = {
+                    "train_mean_reward": sum(epoch_train_rewards) / len(epoch_train_rewards),
+                    "train_max_reward": max(epoch_train_rewards),
+                    "train_mean_speedup": sum(epoch_train_speedups) / len(epoch_train_speedups),
+                    "train_max_speedup": max(epoch_train_speedups),
+                }
+            else:
+                logger.warning(f"[Epoch {epoch + 1}] No programs successfully trained this epoch!")
+                train_metrics = {
+                    "train_mean_reward": 0.0,
+                    "train_max_reward": 0.0,
+                    "train_mean_speedup": 1.0,
+                    "train_max_speedup": 1.0,
+                }
 
             # Test evaluation phase
             self.model.eval()

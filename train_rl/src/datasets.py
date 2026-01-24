@@ -95,13 +95,19 @@ class PolybenchDataset(CodeDataset):
                 if not benchmark_dir.is_dir():
                     continue
 
-                # Look for the main .c file (usually same name as directory)
+                # Look for the main .c file (same name as directory)
                 c_files = list(benchmark_dir.glob('*.c'))
                 if not c_files:
                     continue
 
-                # Use the first .c file found
-                c_file = c_files[0]
+                # Prefer the file matching the directory name
+                c_file = None
+                for f in c_files:
+                    if f.stem == benchmark_dir.name:
+                        c_file = f
+                        break
+                if c_file is None:
+                    c_file = c_files[0]
 
                 try:
                     with open(c_file, 'r') as f:
@@ -109,13 +115,28 @@ class PolybenchDataset(CodeDataset):
 
                     # PolybenchC requires special compiler configuration
                     compiler_config = {
+                        'compiler': 'gcc',
+                        'flags': ['-O2', '-std=c11'],
                         'include_paths': [
                             str(self.utilities_dir),
                             str(benchmark_dir)  # Include benchmark's own directory for .h files
                         ],
                         'additional_sources': [str(self.polybench_c)],
                         'defines': {'POLYBENCH_TIME': None},
-                        'output_is_seconds': True
+                        'output_is_seconds': True,
+                        'linker_flags': ['-lm'],
+                        'kernel_markers': ('#pragma scop', '#pragma endscop'),
+                        'correctness_config': {
+                            'compiler': 'gcc',
+                            'flags': ['-O2', '-std=c11'],
+                            'include_paths': [
+                                str(self.utilities_dir),
+                                str(benchmark_dir),
+                            ],
+                            'additional_sources': [str(self.polybench_c)],
+                            'defines': {'POLYBENCH_DUMP_ARRAYS': None, 'MINI_DATASET': None},
+                            'linker_flags': ['-lm'],
+                        },
                     }
 
                     self.programs.append({
@@ -369,7 +390,8 @@ static void __attribute__((destructor)) __end_timer(void) {
                     # Use gcc for C files with appropriate flags
                     compiler_config = {
                         'compiler': 'gcc',
-                        'flags': ['-O2', '-std=c11', '-lm', '-lrt'],
+                        'flags': ['-O2', '-std=c11'],
+                        'linker_flags': ['-lm', '-lrt'],
                     }
 
                     self.programs.append({
