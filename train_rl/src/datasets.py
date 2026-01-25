@@ -438,21 +438,32 @@ static void init_arrays(void) {{
 {init_code}
 }}
 
+{checksum_function}
+
 int main(void) {{
     init_arrays();
     struct timespec start, end;
+
+    // Outer timing loop for more stable measurements
+    int timing_runs = {timing_runs};
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    int ntimes = {ntimes};
-    for (int nl = 0; nl < {nl_bound}; nl++) {{
+    for (int run = 0; run < timing_runs; run++) {{
+        int ntimes = {ntimes};
+        for (int nl = 0; nl < {nl_bound}; nl++) {{
 {loop_body}
-        vol_sink = a[0];
+            vol_sink = a[0];
+        }}
     }}
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = (end.tv_sec - start.tv_sec) * 1e6 +
                      (end.tv_nsec - start.tv_nsec) / 1e3;
-    printf("%f\\n", elapsed);
+    // Report average time per run
+    printf("%f\\n", elapsed / timing_runs);
+
+    // Print checksums to stderr for correctness verification
+    print_checksums();
     return 0;
 }}
 '''
@@ -480,7 +491,8 @@ int main(void) {{
         self,
         tsvc_dir: str,
         seed: Optional[int] = None,
-        ntimes: int = 200000,
+        ntimes: int = 50000,
+        timing_runs: int = 5,
         categories: Optional[List[str]] = None,
         skip_compile_check: bool = True
     ):
@@ -490,12 +502,14 @@ int main(void) {{
         Args:
             tsvc_dir: Path to TSVC directory (or llvm-test-suite root)
             seed: Random seed for reproducibility
-            ntimes: Iteration count for kernels (lower = faster training runs)
+            ntimes: Iteration count per timing run (inner loop, default: 50000)
+            timing_runs: Number of times to run the kernel for timing (outer loop, default: 5)
             categories: Optional filter for kernel categories
             skip_compile_check: Skip compile-checking kernels (uses KNOWN_UNCOMPILABLE_KERNELS only)
         """
         super().__init__(seed)
         self.ntimes = ntimes
+        self.timing_runs = timing_runs
         self.categories = categories
         self.skip_compile_check = skip_compile_check
 
@@ -670,6 +684,23 @@ int main(void) {{
             elif arr == 'indx':
                 decls.append(f'static int indx[LEN] __attribute__((aligned(32)));')
         return '\n'.join(decls)
+
+    def _generate_checksum_function(self, used_arrays: set) -> str:
+        """Generate a function that prints checksums of all used arrays."""
+        lines = ['static void print_checksums(void) {']
+
+        for arr in sorted(used_arrays):
+            if arr in self.ARRAYS_1D:
+                lines.append(f'    {{ double sum = 0.0; for (int i = 0; i < LEN; i++) sum += {arr}[i]; fprintf(stderr, "{arr}=%.10e\\n", sum); }}')
+            elif arr in self.ARRAYS_2D:
+                lines.append(f'    {{ double sum = 0.0; for (int i = 0; i < LEN2; i++) for (int j = 0; j < LEN2; j++) sum += {arr}[i][j]; fprintf(stderr, "{arr}=%.10e\\n", sum); }}')
+            elif arr == 'array':
+                lines.append(f'    {{ double sum = 0.0; for (int i = 0; i < LEN2*LEN2; i++) sum += array[i]; fprintf(stderr, "array=%.10e\\n", sum); }}')
+            elif arr == 'indx':
+                lines.append(f'    {{ long sum = 0; for (int i = 0; i < LEN; i++) sum += indx[i]; fprintf(stderr, "indx=%ld\\n", sum); }}')
+
+        lines.append('}')
+        return '\n'.join(lines)
 
     def _extract_kernels(self, content: str) -> List[Dict]:
         """
@@ -884,11 +915,16 @@ int main(void) {{
 
 '''
 
-            # Generate the standalone program
+            # Generate checksum function for correctness checking
+            checksum_function = self._generate_checksum_function(used_arrays)
+
+            # Generate the standalone program (includes timing and checksums)
             program = self.PROGRAM_TEMPLATE.format(
                 array_declarations=array_decls,
                 helper_functions=helper_functions,
                 init_code=init_code,
+                checksum_function=checksum_function,
+                timing_runs=self.timing_runs,
                 ntimes=self.ntimes,
                 nl_bound=nl_bound_code,
                 loop_body=body_substituted,
@@ -897,6 +933,11 @@ int main(void) {{
             compiler_config = {
                 'compiler': 'gcc',
                 'flags': ['-O2', '-std=c11', '-lm', '-lrt'],
+                # Correctness checking uses the same config - checksums are printed to stderr
+                'correctness_config': {
+                    'compiler': 'gcc',
+                    'flags': ['-O2', '-std=c11', '-lm', '-lrt'],
+                },
             }
 
             self.programs.append({
