@@ -269,8 +269,8 @@ def plot_epoch_metrics(metrics: dict, output_dir: str = None, log_file: str = No
 
     # Plot 1: Train vs Test Mean Reward
     ax1 = axes[0, 0]
-    ax1.plot(epochs, metrics['train_mean_reward'], 'b-o', markersize=6, label='Train')
-    ax1.plot(epochs, metrics['test_mean_reward'], 'r-s', markersize=6, label='Test')
+    ax1.plot(epochs, metrics['train_mean_reward'], 'b-', linewidth=1.5, label='Train')
+    ax1.plot(epochs, metrics['test_mean_reward'], 'r-', linewidth=1.5, label='Test')
     ax1.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
     ax1.set_xlabel('Epoch')
     ax1.set_ylabel('Mean Reward')
@@ -280,8 +280,8 @@ def plot_epoch_metrics(metrics: dict, output_dir: str = None, log_file: str = No
 
     # Plot 2: Train vs Test Speedup
     ax2 = axes[0, 1]
-    ax2.plot(epochs, metrics['train_mean_speedup'], 'b-o', markersize=6, label='Train')
-    ax2.plot(epochs, metrics['test_mean_speedup'], 'r-s', markersize=6, label='Test')
+    ax2.plot(epochs, metrics['train_mean_speedup'], 'b-', linewidth=1.5, label='Train')
+    ax2.plot(epochs, metrics['test_mean_speedup'], 'r-', linewidth=1.5, label='Test')
     ax2.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='Baseline')
     ax2.set_xlabel('Epoch')
     ax2.set_ylabel('Mean Speedup (x)')

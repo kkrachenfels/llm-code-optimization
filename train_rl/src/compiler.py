@@ -24,7 +24,8 @@ class CppCompiler:
         defines: Optional[dict] = None,
         output_is_seconds: bool = False,
         source_extension: Optional[str] = None,
-        linker_flags: Optional[list] = None
+        linker_flags: Optional[list] = None,
+        run_args: Optional[list] = None
     ):
         """
         Initialize the C++ compiler.
@@ -38,6 +39,7 @@ class CppCompiler:
             output_is_seconds: If True, expect output in seconds and convert to microseconds
             source_extension: File extension for source files (default: '.cpp' for g++, '.c' for gcc)
             linker_flags: Flags placed after source files (e.g., ["-lm"])
+            run_args: Arguments to pass to the compiled binary at runtime
         """
         self.compiler = compiler
         self.flags = flags or ["-O2", "-std=c++17"]
@@ -46,6 +48,7 @@ class CppCompiler:
         self.defines = defines or {}
         self.output_is_seconds = output_is_seconds
         self.linker_flags = linker_flags or []
+        self.run_args = run_args or []
         # Auto-detect extension based on compiler if not specified
         if source_extension is None:
             self.source_extension = '.c' if compiler in ('gcc', 'cc', 'clang') else '.cpp'
@@ -125,11 +128,12 @@ class CppCompiler:
                 return False, None, f"Compilation error: {str(e)}"
 
             # Run multiple times and average
+            run_cmd = [binary_path] + self.run_args
             runtimes = []
             for _ in range(num_runs):
                 try:
                     result = subprocess.run(
-                        [binary_path],
+                        run_cmd,
                         capture_output=True,
                         text=True,
                         timeout=timeout
@@ -208,7 +212,7 @@ class CppCompiler:
             # Run once
             try:
                 result = subprocess.run(
-                    [binary_path], capture_output=True, text=True, timeout=timeout
+                    [binary_path] + self.run_args, capture_output=True, text=True, timeout=timeout
                 )
                 if result.returncode != 0:
                     return False, result.stdout, result.stderr, f"Runtime error: {result.stderr}"

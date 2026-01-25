@@ -67,8 +67,8 @@ def parse_args():
         "--dataset",
         type=str,
         default=None,
-        choices=['polybench', 'directory', 'svcomp'],
-        help="Dataset type to use: 'polybench', 'directory', or 'svcomp' (use this OR --program)"
+        choices=['polybench', 'directory', 'svcomp', 'tsvc', 'cbench'],
+        help="Dataset type to use: 'polybench', 'directory', 'svcomp', 'tsvc', or 'cbench' (use this OR --program)"
     )
     parser.add_argument(
         "--dataset-path",
@@ -234,6 +234,10 @@ def main():
                 dataset = create_dataset('directory', directory=args.dataset_path)
             elif args.dataset == 'svcomp':
                 dataset = create_dataset('svcomp', svcomp_dir=args.dataset_path)
+            elif args.dataset == 'tsvc':
+                dataset = create_dataset('tsvc', tsvc_dir=args.dataset_path)
+            elif args.dataset == 'cbench':
+                dataset = create_dataset('cbench', cbench_dir=args.dataset_path)
         except Exception as e:
             logger.error(f"Failed to load dataset: {e}")
             return 1
