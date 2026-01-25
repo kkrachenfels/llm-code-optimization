@@ -123,6 +123,14 @@ class SimpleCodeOptimizationTrainer:
         self.device = self.model.device
         logger.info(f"Model loaded. Device: {self.device}, Memory footprint: {self.model.get_memory_footprint() / 1e9:.2f} GB")
 
+        # Get the model's actual max position embeddings and use the smaller of user-specified and model limit
+        model_max_length = getattr(self.model.config, 'max_position_embeddings', None) or \
+                           getattr(self.model.config, 'n_positions', None) or \
+                           self.max_length
+        if self.max_length > model_max_length:
+            logger.warning(f"Requested max_length ({self.max_length}) exceeds model's max position embeddings ({model_max_length}). Using {model_max_length}.")
+            self.max_length = model_max_length
+
         self.model.train()
 
         # Setup optimizer
@@ -369,11 +377,16 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         input_len = inputs['input_ids'].shape[1]
         logger.info(f"Prompt tokenized to {input_len} tokens")
 
+        # Calculate max_new_tokens to stay within model's max_length
+        max_new_tokens = self.max_length - input_len
+        if max_new_tokens < 100:
+            logger.warning(f"Very little room for generation ({max_new_tokens} tokens). Consider shorter prompts.")
+
         # Generate with log probabilities
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=2048,  # Increased from 512 to allow full code generation
+                max_new_tokens=max_new_tokens,
                 do_sample=True,
                 top_p=0.9,
                 top_k=50,
@@ -731,6 +744,20 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         logger.info(f"Starting epoch training for {num_epochs} epochs...")
         logger.info(f"Train set: {len(self.train_indices)} programs, Test set: {len(self.test_indices)} programs")
         logger.info(f"Programs per epoch: {self.train_programs}")
+
+        # Epoch 0: Evaluate on test set before any training
+        logger.info(f"\n{'#'*60}")
+        logger.info(f"EPOCH 0 (Pre-training baseline)")
+        logger.info(f"{'#'*60}")
+        self.model.eval()
+        with torch.no_grad():
+            test_metrics = self.evaluate_test_set(epoch=0)
+        self.model.train()
+        logger.info(f"\n{'='*60}")
+        logger.info(f"EPOCH 0 SUMMARY (Pre-training baseline):")
+        logger.info(f"  Test:  mean_reward={test_metrics['test_mean_reward']:.3f}, "
+                   f"mean_speedup={test_metrics['test_mean_speedup']:.2f}x")
+        logger.info(f"{'='*60}")
 
         for epoch in range(num_epochs):
             logger.info(f"\n{'#'*60}")
