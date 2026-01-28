@@ -10,8 +10,9 @@ class RewardFunction:
         baseline_runtime: float,
         speedup_weight: float = 1.0,
         compilation_penalty: float = -1.0,
-        timeout_penalty: float = -2.0,
-        correctness_bonus: float = 0.5
+        timeout_penalty: float = -1.0,
+        correctness_bonus: float = 0.5,
+        max_speedup: float = 100.0 # TODO: CHECK SOME SAMPLE VALUES WHEN IT RUNS LATER
     ):
         """
         Initialize reward function.
@@ -22,12 +23,15 @@ class RewardFunction:
             compilation_penalty: Penalty for compilation failures
             timeout_penalty: Penalty for timeouts
             correctness_bonus: Bonus for producing correct, compilable code
+            max_speedup: Maximum plausible speedup; anything beyond is treated
+                as a bogus optimization and penalized (default: 50x)
         """
         self.baseline_runtime = baseline_runtime
         self.speedup_weight = speedup_weight
         self.compilation_penalty = compilation_penalty
         self.timeout_penalty = timeout_penalty
         self.correctness_bonus = correctness_bonus
+        self.max_speedup = max_speedup
 
     def compute_reward(
         self,
@@ -53,13 +57,27 @@ class RewardFunction:
             else:
                 return self.compilation_penalty
 
+        # Guard against zero/near-zero runtimes (measurement errors or no-op optimizations)
+        if runtime is None or runtime <= 0:
+            # Treat as suspicious - could be a measurement error or invalid optimization
+            return self.compilation_penalty
+
         # Compute speedup
         speedup = self.baseline_runtime / runtime
+
+        # Cap speedup to prevent reward hacking from bogus optimizations
+        # (e.g., code that short-circuits computation). Even aggressive
+        # vectorization + algorithmic improvements rarely exceed 50x.
+        if speedup > self.max_speedup:
+            return self.compilation_penalty
 
         # Reward formula: log-based for smooth gradient
         # log(speedup) is positive for speedup > 1, negative for slowdown
         # This provides a continuous reward signal without discontinuities
         reward = self.speedup_weight * np.log(speedup) + self.correctness_bonus
+
+        # Floor: compiling but slow should never be worse than not compiling
+        reward = max(reward, -0.5)
 
         return reward
 

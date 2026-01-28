@@ -412,9 +412,15 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
 
         return prompts, responses, log_probs_list
 
-    def evaluate_code(self, responses: List[str]) -> List[float]:
-        """Evaluate generated code and compute rewards."""
+    def evaluate_code(self, responses: List[str]) -> tuple:
+        """Evaluate generated code and compute rewards.
+
+        Returns:
+            Tuple of (rewards, runtimes) where runtimes contains float values
+            for successful runs and None for failures.
+        """
         rewards = []
+        runtimes = []
 
         for idx, response in enumerate(responses):
             logger.debug(f"--- Evaluating response {idx + 1}/{len(responses)} ---")
@@ -434,6 +440,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
                         False, None, "Empty kernel output"
                     )
                     rewards.append(reward)
+                    runtimes.append(None)
                     continue
 
                 logger.debug(f"Response {idx + 1}: Kernel code {len(code)} chars")
@@ -448,6 +455,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
                         False, None, "Failed to extract code"
                     )
                     rewards.append(reward)
+                    runtimes.append(None)
                     continue
 
                 logger.debug(f"Response {idx + 1}: Extracted {len(code)} chars of code")
@@ -470,6 +478,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
             # Compute reward
             reward = self.reward_function.compute_reward(success, runtime, error)
             rewards.append(reward)
+            runtimes.append(runtime if success else None)
 
             if success:
                 logger.info(
@@ -480,7 +489,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
             else:
                 logger.info(f"Failed: {error}, Reward: {reward:.3f}")
 
-        return rewards
+        return rewards, runtimes
 
     def train_step(self, epoch: Optional[int] = None) -> Dict[str, float]:
         """Perform one training step using REINFORCE."""
@@ -492,7 +501,19 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
 
         # Evaluate and get rewards
         logger.debug(f"{prefix}Evaluating generated code...")
-        rewards = self.evaluate_code(responses)
+        rewards, runtimes = self.evaluate_code(responses)
+
+        # Compute speedup from best successful runtime in this batch
+        # Filter out runtimes that would produce unreasonable speedups (> max_speedup)
+        # These are likely measurement errors or invalid optimizations
+        max_speedup = self.reward_function.max_speedup
+        min_valid_runtime = self.baseline_runtime / max_speedup
+        valid_runtimes = [r for r in runtimes if r is not None and r >= min_valid_runtime]
+        if valid_runtimes:
+            best_batch_runtime = min(valid_runtimes)
+            speedup = self.baseline_runtime / best_batch_runtime
+        else:
+            speedup = 1.0  # No valid speedups, report as 1.0x
 
         # Compute normalized rewards (baseline subtraction)
         rewards_tensor = torch.tensor(rewards, device=self.device)
@@ -545,8 +566,7 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
             "max_reward": max(rewards),
             "min_reward": min(rewards),
             "loss": total_loss / len(rewards),
-            "best_runtime": self.reward_function.best_runtime,
-            "speedup": self.baseline_runtime / self.reward_function.best_runtime,
+            "speedup": speedup,
         }
 
         return metrics
@@ -574,9 +594,6 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
                     logger.error("All remaining programs failed to compile, stopping training")
                     break
 
-            # Track best runtime before step to detect improvement
-            best_runtime_before = self.reward_function.best_runtime
-
             metrics = self.train_step()
 
             logger.info(
@@ -586,12 +603,11 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
                 f"best_speedup={metrics['speedup']:.2f}x"
             )
 
-            # Save checkpoint if reward > 1 and we improved best runtime
-            best_runtime_improved = metrics['best_runtime'] < best_runtime_before
-            if metrics['max_reward'] > 1 and best_runtime_improved:
+            # Save checkpoint if reward > 1 (indicating meaningful speedup)
+            if metrics['max_reward'] > 1:
                 checkpoint_path = self.output_dir / f"checkpoint-step{step + 1}-reward{metrics['max_reward']:.2f}"
                 self.save_checkpoint(checkpoint_path)
-                logger.info(f"Saved checkpoint to {checkpoint_path} (max_reward={metrics['max_reward']:.3f}, new best runtime={metrics['best_runtime']:.2f}μs)")
+                logger.info(f"Saved checkpoint to {checkpoint_path} (max_reward={metrics['max_reward']:.3f}, speedup={metrics['speedup']:.2f}x)")
 
         logger.info("Training complete!")
 
@@ -676,13 +692,24 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         prompts, responses, _ = self.generate_optimizations(self.batch_size)
 
         # Evaluate and get rewards
-        rewards = self.evaluate_code(responses)
+        rewards, runtimes = self.evaluate_code(responses)
+
+        # Compute speedup from best successful runtime in this batch
+        # Filter out runtimes that would produce unreasonable speedups (> max_speedup)
+        max_speedup = self.reward_function.max_speedup
+        min_valid_runtime = self.baseline_runtime / max_speedup
+        valid_runtimes = [r for r in runtimes if r is not None and r >= min_valid_runtime]
+        if valid_runtimes:
+            best_batch_runtime = min(valid_runtimes)
+            speedup = self.baseline_runtime / best_batch_runtime
+        else:
+            speedup = 1.0  # No valid speedups, report as 1.0x
 
         return {
             "program": self.current_program['name'],
             "mean_reward": sum(rewards) / len(rewards) if rewards else 0.0,
             "max_reward": max(rewards) if rewards else 0.0,
-            "speedup": self.baseline_runtime / self.reward_function.best_runtime,
+            "speedup": speedup,
         }
 
     def evaluate_test_set(self, epoch: Optional[int] = None) -> Dict[str, float]:

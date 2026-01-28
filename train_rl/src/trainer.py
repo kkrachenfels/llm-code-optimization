@@ -174,7 +174,7 @@ Optimized code:
 
         return responses
 
-    def evaluate_code(self, responses: List[str]) -> List[float]:
+    def evaluate_code(self, responses: List[str]) -> tuple:
         """
         Evaluate generated code and compute rewards.
 
@@ -182,9 +182,11 @@ Optimized code:
             responses: List of generated code responses
 
         Returns:
-            List of rewards
+            Tuple of (rewards, runtimes) where runtimes contains float values
+            for successful runs and None for failures.
         """
         rewards = []
+        runtimes = []
 
         for response in responses:
             # Extract code from response
@@ -196,6 +198,7 @@ Optimized code:
                     False, None, "Failed to extract code"
                 )
                 rewards.append(reward)
+                runtimes.append(None)
                 continue
 
             # Compile and run
@@ -204,6 +207,7 @@ Optimized code:
             # Compute reward
             reward = self.reward_function.compute_reward(success, runtime, error)
             rewards.append(reward)
+            runtimes.append(runtime if success else None)
 
             if success:
                 logger.info(
@@ -214,7 +218,7 @@ Optimized code:
             else:
                 logger.info(f"Failed: {error}, Reward: {reward:.3f}")
 
-        return rewards
+        return rewards, runtimes
 
     def train_step(self, batch_size: int = 4) -> Dict[str, float]:
         """
@@ -258,8 +262,19 @@ Optimized code:
 
         # Evaluate and get rewards
         logger.info("Evaluating generated code...")
-        rewards = self.evaluate_code(responses)
+        rewards, runtimes = self.evaluate_code(responses)
         reward_tensors = [torch.tensor(r) for r in rewards]
+
+        # Compute speedup from best successful runtime in this batch
+        # Filter out runtimes that would produce unreasonable speedups (> max_speedup)
+        max_speedup = self.reward_function.max_speedup
+        min_valid_runtime = self.baseline_runtime / max_speedup
+        valid_runtimes = [r for r in runtimes if r is not None and r >= min_valid_runtime]
+        if valid_runtimes:
+            best_batch_runtime = min(valid_runtimes)
+            speedup = self.baseline_runtime / best_batch_runtime
+        else:
+            speedup = 1.0  # No valid speedups, report as 1.0x
 
         # Run PPO step
         logger.info("Running PPO update...")
@@ -270,8 +285,7 @@ Optimized code:
             "mean_reward": sum(rewards) / len(rewards),
             "max_reward": max(rewards),
             "min_reward": min(rewards),
-            "best_runtime": self.reward_function.best_runtime,
-            "speedup": self.baseline_runtime / self.reward_function.best_runtime,
+            "speedup": speedup,
         }
 
         return metrics

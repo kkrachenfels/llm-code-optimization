@@ -685,19 +685,41 @@ int main(void) {{
                 decls.append(f'static int indx[LEN] __attribute__((aligned(32)));')
         return '\n'.join(decls)
 
+    # Fixed sample indices for element-wise correctness checking.
+    # Spread across the array to catch partial-computation cheats.
+    SAMPLE_INDICES_1D = [0, 1, 7, 42, 100, 511, 1000, 4999, 10000, 15999, 20000, 25000, 31000, 31999]
+    SAMPLE_INDICES_2D = [(0,0), (0,127), (0,255), (1,1), (42,42), (100,200), (127,127), (200,100), (255,0), (255,255)]
+
     def _generate_checksum_function(self, used_arrays: set) -> str:
-        """Generate a function that prints checksums of all used arrays."""
+        """Generate a function that prints element-wise samples of all used arrays.
+
+        Instead of just printing sums (which can be gamed by hardcoding output),
+        this prints individual array elements at specific indices. This makes it
+        much harder for the model to fake correctness without actually computing
+        the right values.
+        """
         lines = ['static void print_checksums(void) {']
 
         for arr in sorted(used_arrays):
             if arr in self.ARRAYS_1D:
+                # Print sum for backward compat, plus individual elements
                 lines.append(f'    {{ double sum = 0.0; for (int i = 0; i < LEN; i++) sum += {arr}[i]; fprintf(stderr, "{arr}=%.10e\\n", sum); }}')
+                for idx in self.SAMPLE_INDICES_1D:
+                    lines.append(f'    fprintf(stderr, "{arr}[{idx}]=%.15e\\n", {arr}[{idx}]);')
             elif arr in self.ARRAYS_2D:
                 lines.append(f'    {{ double sum = 0.0; for (int i = 0; i < LEN2; i++) for (int j = 0; j < LEN2; j++) sum += {arr}[i][j]; fprintf(stderr, "{arr}=%.10e\\n", sum); }}')
+                for i, j in self.SAMPLE_INDICES_2D:
+                    lines.append(f'    fprintf(stderr, "{arr}[{i}][{j}]=%.15e\\n", {arr}[{i}][{j}]);')
             elif arr == 'array':
                 lines.append(f'    {{ double sum = 0.0; for (int i = 0; i < LEN2*LEN2; i++) sum += array[i]; fprintf(stderr, "array=%.10e\\n", sum); }}')
+                for idx in self.SAMPLE_INDICES_1D:
+                    # Clamp to LEN2*LEN2-1 = 65535
+                    clamped = min(idx, 65535)
+                    lines.append(f'    fprintf(stderr, "array[{clamped}]=%.15e\\n", array[{clamped}]);')
             elif arr == 'indx':
                 lines.append(f'    {{ long sum = 0; for (int i = 0; i < LEN; i++) sum += indx[i]; fprintf(stderr, "indx=%ld\\n", sum); }}')
+                for idx in self.SAMPLE_INDICES_1D:
+                    lines.append(f'    fprintf(stderr, "indx[{idx}]=%d\\n", indx[{idx}]);')
 
         lines.append('}')
         return '\n'.join(lines)
