@@ -165,6 +165,12 @@ def parse_args():
         action="store_true",
         help="Enable verbose DEBUG logging to see generated code and compilation details"
     )
+    parser.add_argument(
+        "--best-of-batch",
+        action="store_true",
+        help="Filtered REINFORCE: only train on samples with positive reward. "
+             "Filters out failed/slow samples, applies REINFORCE on successful ones."
+    )
 
     return parser.parse_args()
 
@@ -259,6 +265,7 @@ def main():
         logger.info(f"Training steps: {args.steps}")
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Learning rate: {args.learning_rate}")
+    logger.info(f"Best-of-batch mode: {args.best_of_batch}")
     logger.info(f"Output directory: {args.output_dir}")
     logger.info("=" * 80)
 
@@ -276,6 +283,7 @@ def main():
             train_programs=args.train_programs,
             test_programs=args.test_programs,
             seed=args.seed,
+            best_of_batch=args.best_of_batch,
         )
     except Exception as e:
         logger.error(f"Failed to initialize trainer: {e}")

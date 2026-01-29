@@ -29,6 +29,7 @@ class SimpleCodeOptimizationTrainer:
         train_programs: Optional[int] = None,
         test_programs: Optional[int] = None,
         seed: Optional[int] = None,
+        best_of_batch: bool = False,
     ):
         """
         Initialize the trainer.
@@ -45,6 +46,7 @@ class SimpleCodeOptimizationTrainer:
             train_programs: Number of programs per epoch for training (for epoch mode)
             test_programs: Number of programs to hold out for testing (for epoch mode)
             seed: Random seed for reproducible train/test splits
+            best_of_batch: If True, only train on the best sample per batch (highest reward)
         """
         self.dataset = dataset
         self.train_programs = train_programs
@@ -74,6 +76,7 @@ class SimpleCodeOptimizationTrainer:
         self.output_dir.mkdir(exist_ok=True)
         self.batch_size = batch_size
         self.max_length = max_length
+        self.best_of_batch = best_of_batch
 
         # Current program state (will be updated each step in dataset mode)
         self.current_program = None
@@ -515,59 +518,112 @@ Optimize this {lang} code for maximum runtime performance. Keep the same functio
         else:
             speedup = 1.0  # No valid speedups, report as 1.0x
 
-        # Compute normalized rewards (baseline subtraction)
-        rewards_tensor = torch.tensor(rewards, device=self.device)
-        normalized_rewards = rewards_tensor - rewards_tensor.mean()
-
-        # Compute loss using REINFORCE
-        # We need to recompute log probs with gradients
+        # Compute loss using REINFORCE (or best-of-batch supervised learning)
         logger.debug(f"{prefix}Computing gradients...")
         self.optimizer.zero_grad()
 
         total_loss = 0.0
-        for i, (prompt, response) in enumerate(zip(prompts, responses)):
-            # Tokenize prompt separately to get its length
-            prompt_tokens = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
-            prompt_length = prompt_tokens['input_ids'].shape[1]
 
-            # Tokenize full text (prompt + response)
-            full_text = prompt + response
-            inputs = self.tokenizer(full_text, return_tensors="pt", truncation=True, max_length=self.max_length)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        if self.best_of_batch:
+            # Filtered REINFORCE: only train on samples with positive reward
+            # This combines RL (reward-weighted updates) with rejection sampling (filter failures)
+            positive_indices = [i for i, r in enumerate(rewards) if r > 0]
+            num_positive = len(positive_indices)
 
-            # Create labels with prompt tokens masked out (-100 is ignored by CrossEntropyLoss)
-            labels = inputs['input_ids'].clone()
-            labels[:, :prompt_length] = -100
+            if positive_indices:
+                # Compute normalized rewards only among positive samples
+                positive_rewards = torch.tensor([rewards[i] for i in positive_indices], device=self.device)
+                normalized_rewards = positive_rewards - positive_rewards.mean()
 
-            # Forward pass - loss is only computed on response tokens now
-            outputs = self.model(**inputs, labels=labels)
+                for j, i in enumerate(positive_indices):
+                    prompt, response = prompts[i], responses[i]
 
-            # Count response tokens for scaling mean -> sum
-            num_response_tokens = (labels != -100).sum().item()
-            if num_response_tokens == 0:
-                logger.warning(f"Sample {i}: No response tokens after truncation, skipping")
-                continue
+                    # Tokenize prompt separately to get its length
+                    prompt_tokens = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
+                    prompt_length = prompt_tokens['input_ids'].shape[1]
 
-            # REINFORCE loss: -log_prob * (reward - baseline)
-            # Multiply by num_response_tokens to convert mean to sum of log probs
-            loss = -outputs.loss * num_response_tokens * normalized_rewards[i]
-            total_loss += loss.item()
+                    # Tokenize full text (prompt + response)
+                    full_text = prompt + response
+                    inputs = self.tokenizer(full_text, return_tensors="pt", truncation=True, max_length=self.max_length)
+                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            # Backward pass (accumulate gradients)
-            loss.backward()
+                    # Create labels with prompt tokens masked out (-100 is ignored by CrossEntropyLoss)
+                    labels = inputs['input_ids'].clone()
+                    labels[:, :prompt_length] = -100
+
+                    # Forward pass - loss is only computed on response tokens now
+                    outputs = self.model(**inputs, labels=labels)
+
+                    # Count response tokens for scaling mean -> sum
+                    num_response_tokens = (labels != -100).sum().item()
+                    if num_response_tokens == 0:
+                        logger.warning(f"Sample {i}: No response tokens after truncation, skipping")
+                        continue
+
+                    # REINFORCE loss on positive samples only
+                    loss = -outputs.loss * num_response_tokens * normalized_rewards[j]
+                    total_loss += loss.item()
+
+                    # Backward pass (accumulate gradients)
+                    loss.backward()
+
+                logger.debug(f"Filtered REINFORCE: training on {num_positive}/{len(rewards)} samples with positive reward")
+            else:
+                logger.debug(f"Filtered REINFORCE: skipping update, no samples with positive reward")
+        else:
+            # Standard REINFORCE: train on all samples weighted by normalized reward
+            rewards_tensor = torch.tensor(rewards, device=self.device)
+            normalized_rewards = rewards_tensor - rewards_tensor.mean()
+
+            for i, (prompt, response) in enumerate(zip(prompts, responses)):
+                # Tokenize prompt separately to get its length
+                prompt_tokens = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
+                prompt_length = prompt_tokens['input_ids'].shape[1]
+
+                # Tokenize full text (prompt + response)
+                full_text = prompt + response
+                inputs = self.tokenizer(full_text, return_tensors="pt", truncation=True, max_length=self.max_length)
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+                # Create labels with prompt tokens masked out (-100 is ignored by CrossEntropyLoss)
+                labels = inputs['input_ids'].clone()
+                labels[:, :prompt_length] = -100
+
+                # Forward pass - loss is only computed on response tokens now
+                outputs = self.model(**inputs, labels=labels)
+
+                # Count response tokens for scaling mean -> sum
+                num_response_tokens = (labels != -100).sum().item()
+                if num_response_tokens == 0:
+                    logger.warning(f"Sample {i}: No response tokens after truncation, skipping")
+                    continue
+
+                # REINFORCE loss: -log_prob * (reward - baseline)
+                # Multiply by num_response_tokens to convert mean to sum of log probs
+                loss = -outputs.loss * num_response_tokens * normalized_rewards[i]
+                total_loss += loss.item()
+
+                # Backward pass (accumulate gradients)
+                loss.backward()
 
         # Optimizer step
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
 
         # Compute metrics
+        num_positive = sum(1 for r in rewards if r > 0)
         metrics = {
             "mean_reward": sum(rewards) / len(rewards),
             "max_reward": max(rewards),
             "min_reward": min(rewards),
-            "loss": total_loss / len(rewards),
+            "loss": total_loss / max(num_positive, 1) if self.best_of_batch else total_loss / max(len(rewards), 1),
             "speedup": speedup,
         }
+
+        # Add filtered REINFORCE specific metrics
+        if self.best_of_batch:
+            metrics["num_positive"] = num_positive
+            metrics["pct_positive"] = num_positive / len(rewards) * 100
 
         return metrics
 
