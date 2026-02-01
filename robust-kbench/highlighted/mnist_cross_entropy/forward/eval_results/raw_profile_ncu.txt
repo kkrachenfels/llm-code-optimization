@@ -1,0 +1,8 @@
+==PROF== Using config file "/mnt/data2/kkrachenfels/robust-kbench/robust_kbench/primitives/config.ncu-cfg"
+==PROF== Connected to process 26611 (/mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/bin/python3.11)
+==ERROR== The application returned an error code (6).
+==WARNING== No kernels were profiled.
+
+STDERR:
+Unable to load any of {libcudnn_graph.so.9.1.0, libcudnn_graph.so.9.1, libcudnn_graph.so.9, libcudnn_graph.so}
+Invalid handle. Cannot load symbol cudnnGetVersion

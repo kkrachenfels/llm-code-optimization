@@ -1,0 +1,47 @@
+{
+    "summary": {
+        "correct": true,
+        "max_diff": 0.0,
+        "total_trials": 5,
+        "all_configs_str": [
+            "batch_size_64_num_classes_10"
+        ]
+    },
+    "eval_settings": {
+        "batch_size_64_num_classes_10": {
+            "correct": true,
+            "num_correct": 5,
+            "total_correct_trials": 5,
+            "max_diff": 0.0,
+            "atol": 0.001,
+            "rtol": 0.001
+        }
+    },
+    "device_info": {
+        "torch_version": "2.5.1+cu121",
+        "cuda_version": "12.1",
+        "cudnn_version": "90.1",
+        "num_gpus": 1,
+        "devices": {
+            "GPU_0": {
+                "name": "NVIDIA RTX A6000",
+                "compute_capability": "8.6",
+                "total_memory_GB": 47.54,
+                "multiprocessors": 84,
+                "max_threads_per_block": 1024,
+                "max_threads_per_sm": 1536,
+                "shared_memory_per_block_KB": 48.0,
+                "L2_cache_size_KB": 6144.0,
+                "memory_bus_width_bits": 384,
+                "clock_rate_MHz": 1800.0,
+                "memory_clock_rate_MHz": 8001.0,
+                "warp_size": 32,
+                "max_blocks_per_multiprocessor": 16
+            }
+        }
+    },
+    "stdout": "",
+    "stderr": "Using /tmp/torch_extensions_52945126 as PyTorch extensions root...\nCreating extension directory /tmp/torch_extensions_52945126/mnist_cross_entropy...\nDetected CUDA files, patching ldflags\nEmitting ninja build file /tmp/torch_extensions_52945126/mnist_cross_entropy/build.ninja...\nBuilding extension module mnist_cross_entropy...\nAllowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)\nLoading extension module mnist_cross_entropy...\n",
+    "nvcc_output": "1.13.0.git.kitware.jobserver-pipe-1\n\n12.4.0\n\n[1/2] /usr/local/cuda-12.1/bin/nvcc --generate-dependencies-with-compile --dependency-output kernel.cuda.o.d -ccbin /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/bin/x86_64-conda-linux-gnu-gcc -DTORCH_EXTENSION_NAME=mnist_cross_entropy -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\\\"_gcc\\\" -DPYBIND11_STDLIB=\\\"_libstdcpp\\\" -DPYBIND11_BUILD_ABI=\\\"_cxxabi1011\\\" -I/mnt/data2/kkrachenfels/robust-kbench/third_party/cutlass/include -isystem /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/lib/python3.11/site-packages/torch/include -isystem /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/lib/python3.11/site-packages/torch/include/torch/csrc/api/include -isystem /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/lib/python3.11/site-packages/torch/include/TH -isystem /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/lib/python3.11/site-packages/torch/include/THC -isystem /usr/local/cuda-12.1/include -isystem /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/include/python3.11 -D_GLIBCXX_USE_CXX11_ABI=0 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_86,code=sm_86 --compiler-options '-fPIC' -O3 --use_fast_math -std=c++17 -c /mnt/data2/kkrachenfels/robust-kbench/highlighted/mnist_cross_entropy/forward/kernel.cu -o kernel.cuda.o \n[2/2] /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/bin/x86_64-conda-linux-gnu-g++ kernel.cuda.o -shared -L/mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench/lib/python3.11/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.1/lib64 -lcudart -o mnist_cross_entropy.so\n",
+    "cuda_fname": "highlighted/mnist_cross_entropy/forward/kernel.cu"
+}

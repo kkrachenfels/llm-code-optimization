@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source:*)",
+      "Bash(conda activate:*)",
+      "Bash(pip install:*)",
+      "Bash(pip cache:*)",
+      "Bash(export TMPDIR=/mnt/data2/kkrachenfels/.pip_tmp)",
+      "Bash(export PIP_CACHE_DIR=/mnt/data2/kkrachenfels/.pip_cache:*)",
+      "Bash(python:*)",
+      "Bash(export:*)",
+      "Bash(export TORCH_CUDA_ARCH_LIST=\"8.6\")",
+      "Bash(__NEW_LINE_30ff0cbda4751289__ echo \"===== KERNELBENCH =====\")",
+      "Bash(tee:*)"
+    ]
+  }
+}

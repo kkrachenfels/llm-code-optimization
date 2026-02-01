@@ -1,0 +1,44 @@
+{
+    "summary": {
+        "avg_mean_time": 2.143,
+        "avg_median_time": 0.0,
+        "avg_iqr_time": 0.0,
+        "all_configs_str": [
+            "batch_size_64_num_classes_10"
+        ]
+    },
+    "eval_settings": {
+        "batch_size_64_num_classes_10": {
+            "mean_time": 2.143,
+            "median_time": 0.0,
+            "iqr_time": 0.0
+        }
+    },
+    "device_info": {
+        "torch_version": "2.5.1+cu121",
+        "cuda_version": "12.1",
+        "cudnn_version": "90.1",
+        "num_gpus": 1,
+        "devices": {
+            "GPU_0": {
+                "name": "NVIDIA RTX A6000",
+                "compute_capability": "8.6",
+                "total_memory_GB": 47.54,
+                "multiprocessors": 84,
+                "max_threads_per_block": 1024,
+                "max_threads_per_sm": 1536,
+                "shared_memory_per_block_KB": 48.0,
+                "L2_cache_size_KB": 6144.0,
+                "memory_bus_width_bits": 384,
+                "clock_rate_MHz": 1800.0,
+                "memory_clock_rate_MHz": 8001.0,
+                "warp_size": 32,
+                "max_blocks_per_multiprocessor": 16
+            }
+        }
+    },
+    "stdout": "Warning: Kineto eval reports the cuda total time including the flush L2 time.\nEvaluated CUDA kernel: highlighted/mnist_cross_entropy/forward/kernel.cu\n{\n    \"summary\": {\n        \"avg_mean_time\": 2.143,\n        \"avg_median_time\": 0.0,\n        \"avg_iqr_time\": 0.0,\n        \"all_configs_str\": [\n            \"batch_size_64_num_classes_10\"\n        ]\n    },\n    \"eval_settings\": {\n        \"batch_size_64_num_classes_10\": {\n            \"mean_time\": 2.143,\n            \"median_time\": 0.0,\n            \"iqr_time\": 0.0\n        }\n    },\n    \"device_info\": {\n        \"torch_version\": \"2.5.1+cu121\",\n        \"cuda_version\": \"12.1\",\n        \"cudnn_version\": \"90.1\",\n        \"num_gpus\": 1,\n        \"devices\": {\n            \"GPU_0\": {\n                \"name\": \"NVIDIA RTX A6000\",\n                \"compute_capability\": \"8.6\",\n                \"total_memory_GB\": 47.54,\n                \"multiprocessors\": 84,\n                \"max_threads_per_block\": 1024,\n                \"max_threads_per_sm\": 1536,\n                \"shared_memory_per_block_KB\": 48.0,\n                \"L2_cache_size_KB\": 6144.0,\n                \"memory_bus_width_bits\": 384,\n                \"clock_rate_MHz\": 1800.0,\n                \"memory_clock_rate_MHz\": 8001.0,\n                \"warp_size\": 32,\n                \"max_blocks_per_multiprocessor\": 16\n            }\n        }\n    }\n}\n",
+    "stderr": "Using /mnt/data2/kkrachenfels/.cache/torch_extensions/py311_cu124 as PyTorch extensions root...\nDetected CUDA files, patching ldflags\nEmitting ninja build file /mnt/data2/kkrachenfels/.cache/torch_extensions/py311_cu124/mnist_cross_entropy/build.ninja...\nBuilding extension module mnist_cross_entropy...\nAllowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)\nLoading extension module mnist_cross_entropy...\n",
+    "nvcc_output": "1.13.0.git.kitware.jobserver-pipe-1\n\n12.4.0\n\nninja: no work to do.\n",
+    "cuda_fname": "highlighted/mnist_cross_entropy/forward/kernel.cu"
+}

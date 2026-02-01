@@ -1,0 +1,40 @@
+{
+    "summary": {
+        "avg_mean_time": 2.467,
+        "avg_median_time": 0.0,
+        "avg_iqr_time": 0.0,
+        "all_configs_str": [
+            "batch_size_64_num_classes_10"
+        ]
+    },
+    "eval_settings": {
+        "batch_size_64_num_classes_10": {
+            "mean_time": 2.467,
+            "median_time": 0.0,
+            "iqr_time": 0.0
+        }
+    },
+    "device_info": {
+        "torch_version": "2.5.1+cu121",
+        "cuda_version": "12.1",
+        "cudnn_version": "90.1",
+        "num_gpus": 1,
+        "devices": {
+            "GPU_0": {
+                "name": "NVIDIA RTX A6000",
+                "compute_capability": "8.6",
+                "total_memory_GB": 47.54,
+                "multiprocessors": 84,
+                "max_threads_per_block": 1024,
+                "max_threads_per_sm": 1536,
+                "shared_memory_per_block_KB": 48.0,
+                "L2_cache_size_KB": 6144.0,
+                "memory_bus_width_bits": 384,
+                "clock_rate_MHz": 1800.0,
+                "memory_clock_rate_MHz": 8001.0,
+                "warp_size": 32,
+                "max_blocks_per_multiprocessor": 16
+            }
+        }
+    }
+}
