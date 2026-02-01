@@ -16,3 +16,7 @@ RL/
 .vscode/
 __pycache__/
 train_rl/tmp/
+**/eval_results/**
+*torch_native_results.json
+*torch_compile_results.json
+*time_results.json

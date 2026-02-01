@@ -82,7 +82,7 @@ def time_function_triton(
     n_iter: int = 10000,
     kernel_name: str | None = None,
 ) -> TimeEvalResult:
-    """Time a function using triton.testing."""
+    """Time a function using triton.testing.do_bench with L2 cache flushing."""
 
     def wrapper():
         return func(*args)
@@ -92,17 +92,26 @@ def time_function_triton(
         wrapper()
         torch.cuda.synchronize(device="cuda")
 
-    # Runtime evaluation trials
-    elapsed_times = testing.do_bench(
+    # Get mean time
+    mean_time = testing.do_bench(
         wrapper,
         warmup=warmup_time,
         rep=n_iter,
-        return_mode="all",
+        return_mode="mean",
     )
+
+    # Get quantiles for median and IQR (25th, 50th, 75th percentiles)
+    q25, median_time, q75 = testing.do_bench(
+        wrapper,
+        warmup=warmup_time,
+        rep=n_iter,
+        quantiles=[0.25, 0.5, 0.75],
+    )
+
     return TimeEvalResult(
-        mean_time=np.mean(elapsed_times),
-        median_time=np.median(elapsed_times),
-        iqr_time=np.percentile(elapsed_times, 75) - np.percentile(elapsed_times, 25),
+        mean_time=mean_time,
+        median_time=median_time,
+        iqr_time=q75 - q25,
     )
 
 
