@@ -1,0 +1,9 @@
+name: robust_kbench
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - libstdcxx-ng
+  - gcc_linux-64=12
+  - gxx_linux-64=12
+prefix: /mnt/data2/kkrachenfels/miniconda3/envs/robust_kbench
