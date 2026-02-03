@@ -1,0 +1,18 @@
+# Core dependencies for RL kernel optimization
+torch>=2.0.0
+transformers>=4.35.0
+accelerate>=0.24.0
+peft>=0.6.0
+
+# For configuration
+pyyaml>=6.0
+
+# For logging
+tqdm>=4.65.0
+wandb>=0.15.0  # optional, for experiment tracking
+
+# For data handling
+numpy>=1.24.0
+
+# robust_kbench is assumed to be installed separately
+# pip install -e .  # from the robust-kbench root

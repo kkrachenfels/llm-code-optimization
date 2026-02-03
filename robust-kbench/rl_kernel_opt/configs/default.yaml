@@ -1,0 +1,84 @@
+# Default configuration for RL-based CUDA kernel optimization
+
+# Model settings
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 4096
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true
+
+# GRPO settings
+grpo:
+  group_size: 8          # Number of responses sampled per prompt
+  kl_coef: 0.05          # KL divergence coefficient
+  clip_ratio: 0.2        # PPO-style clipping ratio
+  gamma: 0.4             # Discount factor for multi-turn rewards
+
+# Reward settings
+reward:
+  # Options: "speed", "speed_correct", "speed_correct_profile"
+  mode: "speed_correct"
+  correctness_bonus: 0.3
+  max_speedup_reward: 5.0  # Cap speedup to avoid reward hacking
+  compile_fail_penalty: -1.0
+  incorrect_penalty: 0.0
+
+  # Profile reward weights (for speed_correct_profile mode)
+  profile:
+    sm_utilization_weight: 0.4
+    memory_throughput_weight: 0.3
+    occupancy_weight: 0.3
+    total_weight: 0.1  # Weight of profile bonus in total reward
+
+# Training settings
+training:
+  tasks_per_batch: 2
+  # trajectories_per_task: 8
+  max_turns: 5           # Multi-turn refinement steps
+  gradient_accumulation_steps: 2
+  learning_rate: 1.0e-6
+  weight_decay: 0.01
+  warmup_steps: 100
+  max_steps: 5000
+  save_interval: 500
+  eval_interval: 100
+  log_interval: 10
+  seed: 42
+
+# Evaluation settings (for robust_kbench)
+evaluation:
+  warmup_time: 25
+  repetition_time: 10000
+  timeout: 300
+  multi_init_settings: true
+  multi_input_settings: true
+  op_atol: 1.0e-5
+  op_rtol: 1.0e-5
+  eval_type: "kernelbench"
+
+# Task settings
+tasks:
+  task_dirs:
+    - "tasks/layernorm"
+    - "tasks/mnist_cross_entropy"
+    - "tasks/mnist_linear"
+    - "tasks/mnist_linear_relu"
+  forward: true
+  # Held out tasks for evaluation
+  eval_task_dirs:
+    - "tasks/llama_rmsnorm"
+
+# Logging
+logging:
+  use_wandb: false
+  wandb_project: "rl-kernel-opt"
+  wandb_entity: null
+  log_dir: "outputs/logs"
+
+# Hardware
+hardware:
+  # GPU IDs to use. Can be single int or list.
+  # First GPU is used for model, all are used for evaluation.
+  # Examples: 0, [0], [0,1,2], [3,4,5,6,7]
+  gpu_ids: [6,7]
